@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/serialtap-core",
+    "crates/serialtap-cli",
+    "crates/serialtap-gui",
+    "plugins/example-plugin",
+]
+
+[workspace.dependencies]
+serialport = "4.7"
+tokio = { version = "1", features = ["full"] }
+tokio-serial = "5"
+clap = { version = "4", features = ["derive"] }
+eframe = "0.29"
+egui = "0.29"
+egui_extras = "0.29"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+thiserror = "2"
+anyhow = "1"
+log = "0.4"
+rfd = "0.15"
