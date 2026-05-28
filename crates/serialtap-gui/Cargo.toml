@@ -25,6 +25,7 @@ rfd = { workspace = true }
 arboard = { workspace = true }
 png = { workspace = true }
 chrono = { workspace = true }
+image = "0.25"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { workspace = true }

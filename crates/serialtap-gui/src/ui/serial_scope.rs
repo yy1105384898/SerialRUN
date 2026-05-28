@@ -3,28 +3,30 @@ use eframe::egui;
 
 pub fn render_serial_scope_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(T::oscilloscope(lang)).strong());
-        ui.separator();
-        let label = if state.scope_capturing { T::stop_monitor(lang) } else { T::capture(lang) };
-        if ui.button(label).clicked() {
-            state.scope_capturing = !state.scope_capturing;
-            if state.scope_capturing { state.scope_data.clear(); }
-        }
-        if ui.button(T::clear(lang)).clicked() { state.scope_data.clear(); }
-    });
-    ui.add_space(4.0);
 
-    ui.horizontal(|ui| {
-        ui.label("Timebase (ms):");
-        ui.add(egui::DragValue::new(&mut state.scope_timebase_ms).range(1.0..=5000.0).speed(10.0));
-    });
-    ui.add_space(4.0);
+    egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(T::oscilloscope(lang)).strong());
+            ui.separator();
+            let label = if state.scope_capturing { T::stop_monitor(lang) } else { T::capture(lang) };
+            if ui.button(label).clicked() {
+                state.scope_capturing = !state.scope_capturing;
+                if state.scope_capturing { state.scope_data.clear(); }
+            }
+            if ui.button(T::clear(lang)).clicked() { state.scope_data.clear(); }
+        });
+        ui.add_space(4.0);
 
-    let available = ui.available_size();
-    let height = available.y.max(120.0);
-    let (response, painter) = ui.allocate_painter(egui::vec2(available.x, height), egui::Sense::hover());
-    let rect = response.rect;
+        ui.horizontal(|ui| {
+            ui.label("Timebase (ms):");
+            ui.add(egui::DragValue::new(&mut state.scope_timebase_ms).range(1.0..=5000.0).speed(10.0));
+        });
+        ui.add_space(4.0);
+
+        let available = ui.available_size();
+        let height = available.y.max(200.0).min(350.0);
+        let (response, painter) = ui.allocate_painter(egui::vec2(available.x, height), egui::Sense::hover());
+        let rect = response.rect;
 
     painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(15, 15, 25));
 
@@ -75,6 +77,7 @@ pub fn render_serial_scope_panel(ui: &mut egui::Ui, state: &mut AppState) {
     if state.scope_capturing && state.is_connected { read_scope_data(state); }
 
     ui.horizontal(|ui| { ui.label(format!("Points: {}", state.scope_data.len())); });
+    }); // End ScrollArea
 }
 
 fn read_scope_data(state: &mut AppState) {

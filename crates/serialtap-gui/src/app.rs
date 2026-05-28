@@ -83,7 +83,7 @@ impl eframe::App for SerialTapApp {
 
         toggle_window!(state.show_chart_window, T::data_chart(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::charts::render_chart_panel(ui, s), 400.0, 300.0);
         toggle_window!(state.show_log_window, T::log_viewer(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::log_viewer::render_log_panel(ui, s), 400.0, 350.0);
-        toggle_window!(state.show_help, T::help(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::help::render_help_panel(ui, s.language), 500.0, 450.0);
+        toggle_window!(state.show_help, T::help(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::help::render_help_panel(ui, s), 600.0, 500.0);
         toggle_window!(state.show_modbus_window, T::modbus_panel(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::modbus::render_modbus_panel(ui, s), 520.0, 450.0);
         toggle_window!(state.show_plc_window, T::plc_control(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::plc::render_plc_panel(ui, s), 600.0, 500.0);
         toggle_window!(state.show_checksum_window, T::checksum(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::checksum::render_checksum_panel(ui, s), 400.0, 350.0);
@@ -92,7 +92,7 @@ impl eframe::App for SerialTapApp {
         toggle_window!(state.show_data_logger_window, T::data_logger(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::data_logger::render_data_logger_panel(ui, s), 400.0, 250.0);
         toggle_window!(state.show_can_window, T::can_analyzer(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::can_analyzer::render_can_analyzer_panel(ui, s), 550.0, 400.0);
         toggle_window!(state.show_i2c_spi_window, T::i2c_spi(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::i2c_spi::render_i2c_spi_panel(ui, s), 450.0, 380.0);
-        toggle_window!(state.show_scope_window, T::oscilloscope(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::serial_scope::render_serial_scope_panel(ui, s), 600.0, 350.0);
+        toggle_window!(state.show_scope_window, T::oscilloscope(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::serial_scope::render_serial_scope_panel(ui, s), 600.0, 480.0);
         toggle_window!(state.show_flasher_window, T::flasher(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::flasher::render_flasher_panel(ui, s), 420.0, 350.0);
         toggle_window!(state.show_register_editor_window, T::register_editor(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::register_editor::render_register_editor_panel(ui, s), 500.0, 400.0);
         toggle_window!(state.show_plugin_window, T::plugins(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::plugin::render_plugin_panel(ui, s), 480.0, 400.0);

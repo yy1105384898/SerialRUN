@@ -3,6 +3,18 @@ use eframe::egui;
 
 pub fn render_i2c_spi_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
+
+    // Poll async I2C/SPI result
+    if let Some(rx) = &state.i2c_async_receiver {
+        if let Ok(result) = rx.try_recv() {
+            state.i2c_async_receiver = None;
+            match result {
+                Ok(text) => { state.i2c_result = text; }
+                Err(e) => { state.i2c_result = e; }
+            }
+        }
+    }
+
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(T::i2c_spi(lang)).strong());
         ui.separator();
@@ -66,21 +78,45 @@ fn parse_hex_bytes(s: &str) -> Option<Vec<u8>> {
 }
 
 fn i2c_scan(state: &mut AppState) {
-    let mut found = Vec::new();
-    let mut buf = [0u8; 32];
-    for scan_addr in 0x08..=0x77u8 {
-        let cmd = [scan_addr << 1, 0x01];
-        if let Some(ref mut port) = state.port {
-            let _ = port.write(&cmd);
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            if let Ok(n) = port.read(&mut buf) {
-                if n > 0 { found.push(format!("0x{:02X}", scan_addr)); }
+    if state.i2c_async_receiver.is_some() {
+        return;
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let port_name = state.selected_port.clone().unwrap_or_default();
+    let baud_rate = state.config.baud_rate;
+    state.i2c_async_receiver = Some(rx);
+    state.i2c_result = "Scanning...".into();
+
+    std::thread::spawn(move || {
+        let config = serialtap_core::config::SerialConfig {
+            port_name,
+            baud_rate,
+            ..Default::default()
+        };
+        let mut port = serialtap_core::SerialPort::new(config);
+        if port.connect().is_err() {
+            let _ = tx.send(Err("Connect failed".into()));
+            return;
+        }
+
+        let mut found = Vec::new();
+        let mut buf = [0u8; 32];
+        for scan_addr in 0x08..=0x77u8 {
+            let cmd = [scan_addr << 1, 0x01];
+            if port.write(&cmd).is_ok() {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                if let Ok(n) = port.read(&mut buf) {
+                    if n > 0 { found.push(format!("0x{:02X}", scan_addr)); }
+                }
             }
         }
-    }
-    state.i2c_result = if found.is_empty() { "No devices found".into() } else {
-        format!("Found {} device(s): {}", found.len(), found.join(", "))
-    };
+        let _ = port.disconnect();
+        let result = if found.is_empty() { "No devices found".into() } else {
+            format!("Found {} device(s): {}", found.len(), found.join(", "))
+        };
+        let _ = tx.send(Ok(result));
+    });
 }
 
 fn i2c_read(state: &mut AppState) {
@@ -90,19 +126,46 @@ fn i2c_read(state: &mut AppState) {
     let reg: u8 = match u8::from_str_radix(&state.i2c_register.replace("0x", "").replace("0X", ""), 16) {
         Ok(v) => v, Err(_) => { state.i2c_result = "Invalid register".into(); return; }
     };
-    if let Some(ref mut port) = state.port {
-        let cmd = [addr << 1 | 0x01, reg];
-        let _ = port.write(&cmd);
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let mut buf = [0u8; 32];
-        match port.read(&mut buf) {
-            Ok(n) if n > 0 => {
-                let hex = buf[..n].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-                state.i2c_result = format!("Read {} byte(s) from 0x{:02X}:\n{}", n, addr, hex);
-            }
-            _ => { state.i2c_result = "No response".into(); }
+
+    if state.i2c_async_receiver.is_some() {
+        return;
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let port_name = state.selected_port.clone().unwrap_or_default();
+    let baud_rate = state.config.baud_rate;
+    state.i2c_async_receiver = Some(rx);
+    state.i2c_result = "Reading...".into();
+
+    std::thread::spawn(move || {
+        let config = serialtap_core::config::SerialConfig {
+            port_name,
+            baud_rate,
+            ..Default::default()
+        };
+        let mut port = serialtap_core::SerialPort::new(config);
+        if port.connect().is_err() {
+            let _ = tx.send(Err("Connect failed".into()));
+            return;
         }
-    } else { state.i2c_result = "Not connected".into(); }
+
+        let cmd = [addr << 1 | 0x01, reg];
+        let result = if port.write(&cmd).is_ok() {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let mut buf = [0u8; 32];
+            match port.read(&mut buf) {
+                Ok(n) if n > 0 => {
+                    let hex = buf[..n].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                    Ok(format!("Read {} byte(s) from 0x{:02X}:\n{}", n, addr, hex))
+                }
+                _ => Ok("No response".into()),
+            }
+        } else {
+            Err("Write failed".into())
+        };
+        let _ = port.disconnect();
+        let _ = tx.send(result);
+    });
 }
 
 fn i2c_write(state: &mut AppState) {
@@ -129,20 +192,44 @@ fn spi_transfer(state: &mut AppState) {
     let data = match parse_hex_bytes(&state.i2c_data) {
         Some(d) => d, None => { state.i2c_result = "Invalid data hex".into(); return; }
     };
-    if let Some(ref mut port) = state.port {
-        match port.write(&data) {
+
+    if state.i2c_async_receiver.is_some() {
+        return;
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let port_name = state.selected_port.clone().unwrap_or_default();
+    let baud_rate = state.config.baud_rate;
+    state.i2c_async_receiver = Some(rx);
+    state.i2c_result = "Transferring...".into();
+
+    std::thread::spawn(move || {
+        let config = serialtap_core::config::SerialConfig {
+            port_name,
+            baud_rate,
+            ..Default::default()
+        };
+        let mut port = serialtap_core::SerialPort::new(config);
+        if port.connect().is_err() {
+            let _ = tx.send(Err("Connect failed".into()));
+            return;
+        }
+
+        let result = match port.write(&data) {
             Ok(_) => {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 let mut buf = [0u8; 256];
                 match port.read(&mut buf) {
                     Ok(n) => {
                         let hex = buf[..n].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-                        state.i2c_result = format!("SPI: Sent {} byte(s), received {}:\n{}", data.len(), n, hex);
+                        Ok(format!("SPI: Sent {} byte(s), received {}:\n{}", data.len(), n, hex))
                     }
-                    Err(_) => { state.i2c_result = format!("Sent {} byte(s), no response", data.len()); }
+                    Err(_) => Ok(format!("Sent {} byte(s), no response", data.len())),
                 }
             }
-            Err(e) => { state.i2c_result = format!("SPI error: {}", e); }
-        }
-    } else { state.i2c_result = "Not connected".into(); }
+            Err(e) => Err(format!("SPI error: {}", e)),
+        };
+        let _ = port.disconnect();
+        let _ = tx.send(result);
+    });
 }

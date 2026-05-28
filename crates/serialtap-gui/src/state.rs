@@ -595,6 +595,7 @@ pub struct AppState {
     pub hex_mode: bool,
     pub auto_scroll: bool,
     pub show_timestamp: bool,
+    pub terminal_checksum_mode: ChecksumMode,
     pub show_chart_window: bool,
     pub show_log_window: bool,
     pub rx_count: u64,
@@ -670,6 +671,17 @@ pub struct AppState {
     pub reg_alarm_threshold: String,
     // Plugins
     pub plugins: Vec<PluginInfo>,
+    // Help guide (external markdown)
+    pub help_content_zh: String,
+    pub help_content_en: String,
+    // Auto-detect
+    pub auto_detect_receiver: Option<std::sync::mpsc::Receiver<Option<u32>>>,
+    // Async operation states
+    pub modbus_async_receiver: Option<std::sync::mpsc::Receiver<Result<Vec<u8>, String>>>,
+    pub plc_async_receiver: Option<std::sync::mpsc::Receiver<Result<Vec<(u16, std::result::Result<Vec<u8>, String>)>, String>>>,
+    pub i2c_async_receiver: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    pub flasher_async_receiver: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    pub terminal_async_receiver: Option<std::sync::mpsc::Receiver<Result<Vec<u8>, String>>>,
 }
 
 #[derive(Clone)]
@@ -725,6 +737,37 @@ pub enum ScriptAction {
     Read,
 }
 
+fn load_help_file(filename: &str) -> String {
+    // Try multiple locations: exe dir, current dir, docs/
+    let candidates = [
+        std::path::PathBuf::from(filename),
+        std::path::PathBuf::from(format!("docs/{}", filename)),
+    ];
+    // Also try relative to executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let mut p = std::path::PathBuf::from(dir);
+            p.push(filename);
+            // We'll check this below
+        }
+    }
+    for path in &candidates {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            return content;
+        }
+    }
+    // Fallback: try exe directory
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let p = dir.join(filename);
+            if let Ok(content) = std::fs::read_to_string(p) {
+                return content;
+            }
+        }
+    }
+    format!("# {}\n\nHelp file not found. Place `{}` next to the executable or in `docs/`.", filename.trim_end_matches(".md").replace('_', " "), filename)
+}
+
 impl AppState {
     pub fn new() -> Self {
         Self {
@@ -738,6 +781,7 @@ impl AppState {
             hex_mode: false,
             auto_scroll: true,
             show_timestamp: true,
+            terminal_checksum_mode: ChecksumMode::None,
             show_chart_window: false,
             show_log_window: false,
             rx_count: 0,
@@ -778,6 +822,14 @@ impl AppState {
             flasher_mcu: McuType::Stm32, flasher_file: String::new(), flasher_progress: 0.0, flasher_log: VecDeque::new(),
             reg_map: Vec::new(), reg_selected: None, reg_alarm_enabled: false, reg_alarm_threshold: "100".into(),
             plugins: Vec::new(),
+            help_content_zh: load_help_file("help_zh.md"),
+            help_content_en: load_help_file("help_en.md"),
+            auto_detect_receiver: None,
+            modbus_async_receiver: None,
+            plc_async_receiver: None,
+            i2c_async_receiver: None,
+            flasher_async_receiver: None,
+            terminal_async_receiver: None,
         }
     }
 

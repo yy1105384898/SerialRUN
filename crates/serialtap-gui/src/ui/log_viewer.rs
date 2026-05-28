@@ -3,6 +3,8 @@ use eframe::egui;
 
 pub fn render_log_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
+    let is_dark = state.theme == crate::state::Theme::Dark;
+
     ui.horizontal(|ui| {
         ui.label(T::log_viewer(lang));
         ui.separator();
@@ -20,7 +22,7 @@ pub fn render_log_panel(ui: &mut egui::Ui, state: &mut AppState) {
         .show(ui, |ui| {
             for entry in &state.log_entries {
                 let color = match entry.level {
-                    LogLevel::Info => egui::Color32::WHITE,
+                    LogLevel::Info => if is_dark { egui::Color32::WHITE } else { egui::Color32::BLACK },
                     LogLevel::Warning => egui::Color32::YELLOW,
                     LogLevel::Error => egui::Color32::RED,
                 };

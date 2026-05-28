@@ -1,7 +1,9 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod async_utils;
 mod icon;
+mod mcp_server;
 mod plc_presets;
 mod state;
 mod ui;
@@ -15,6 +17,11 @@ fn main() -> eframe::Result<()> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    // Start MCP server in background thread
+    std::thread::spawn(|| {
+        mcp_server::run_mcp_server();
+    });
 
     let icon_data = icon::generate_icon().map(|d| std::sync::Arc::new(d));
     let options = eframe::NativeOptions {

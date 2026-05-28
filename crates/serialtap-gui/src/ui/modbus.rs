@@ -4,6 +4,31 @@ use serialtap_core::protocol::{ModbusFrame, ModbusParser};
 
 pub fn render_modbus_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
+
+    // Poll async Modbus result
+    if let Some(rx) = &state.modbus_async_receiver {
+        if let Ok(result) = rx.try_recv() {
+            state.modbus_async_receiver = None;
+            match result {
+                Ok(resp) => {
+                    let resp_hex = hex_str(&resp);
+                    if let Ok(f) = ModbusFrame::parse(&resp) {
+                        state.modbus.last_response_hex = resp_hex.clone();
+                        state.modbus.frame_log.push_back(ModbusFrameLogEntry {
+                            timestamp: chrono::Utc::now().timestamp_millis(),
+                            request_hex: state.modbus.last_request_hex.clone(),
+                            response_hex: resp_hex,
+                            decoded: ModbusParser::format_frame(&f),
+                            is_error: false,
+                        });
+                        if state.modbus.frame_log.len() > 200 { state.modbus.frame_log.pop_front(); }
+                    }
+                }
+                Err(e) => { state.modbus.last_error = Some(e); }
+            }
+        }
+    }
+
     ui.collapsing(T::quick_request(lang), |ui| { render_quick_request(ui, state); });
     ui.separator();
     ui.collapsing(T::register_monitor(lang), |ui| { render_register_monitor(ui, state); });
@@ -59,26 +84,41 @@ fn do_modbus_request(state: &mut AppState) {
     };
     let req_bytes = frame.to_bytes();
     let req_hex = hex_str(&req_bytes);
-    let mut buf = [0u8; 256];
-    let result = (|| -> Result<Vec<u8>, String> {
-        let port = state.port.as_mut().ok_or("Not connected")?;
-        port.write(&req_bytes).map_err(|e| e.to_string())?;
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let n = port.read(&mut buf).map_err(|e| e.to_string())?;
-        if n < 4 { return Err("No response".into()); }
-        Ok(buf[..n].to_vec())
-    })();
-    match result {
-        Ok(resp) => {
-            let resp_hex = hex_str(&resp);
-            if let Ok(f) = ModbusFrame::parse(&resp) {
-                state.modbus.last_request_hex = req_hex.clone();
-                state.modbus.last_response_hex = resp_hex.clone();
-                state.modbus.frame_log.push_back(ModbusFrameLogEntry { timestamp: chrono::Utc::now().timestamp_millis(), request_hex: req_hex, response_hex: resp_hex, decoded: ModbusParser::format_frame(&f), is_error: false });
-                if state.modbus.frame_log.len() > 200 { state.modbus.frame_log.pop_front(); }
+    state.modbus.last_request_hex = req_hex.clone();
+
+    // Start async request in background thread
+    if state.modbus_async_receiver.is_none() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let port_name = state.selected_port.clone().unwrap_or_default();
+        let baud_rate = state.config.baud_rate;
+        state.modbus_async_receiver = Some(rx);
+        std::thread::spawn(move || {
+            let config = serialtap_core::config::SerialConfig {
+                port_name,
+                baud_rate,
+                ..Default::default()
+            };
+            let mut port = serialtap_core::SerialPort::new(config);
+            if port.connect().is_ok() {
+                if port.write(&req_bytes).is_ok() {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    let mut buf = [0u8; 256];
+                    match port.read(&mut buf) {
+                        Ok(n) if n >= 4 => {
+                            let _ = tx.send(Ok(buf[..n].to_vec()));
+                        }
+                        _ => {
+                            let _ = tx.send(Err("No response".into()));
+                        }
+                    }
+                } else {
+                    let _ = tx.send(Err("Write failed".into()));
+                }
+                let _ = port.disconnect();
+            } else {
+                let _ = tx.send(Err("Connect failed".into()));
             }
-        }
-        Err(e) => { state.modbus.last_error = Some(e); }
+        });
     }
 }
 

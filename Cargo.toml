@@ -4,6 +4,7 @@ members = [
     "crates/serialtap-core",
     "crates/serialtap-cli",
     "crates/serialtap-gui",
+    "crates/serialtap-mcp",
     "crates/serialtap-plugin-api",
     "plugins/example-plugin",
 ]

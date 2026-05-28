@@ -6,6 +6,55 @@ use serialtap_core::protocol::{ModbusFrame, ModbusParser};
 pub fn render_plc_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
 
+    // Poll async PLC result
+    if let Some(rx) = &state.plc_async_receiver {
+        if let Ok(result) = rx.try_recv() {
+            state.plc_async_receiver = None;
+            if let Ok(results) = result {
+                let regs = get_register_defs(state);
+                for (addr, resp_result) in results {
+                    if let Ok(resp) = resp_result {
+                        if let Ok(f) = ModbusFrame::parse(&resp) {
+                            let data = &f.data;
+                            if let Some(reg) = regs.iter().find(|r| r.addr == addr) {
+                                let formatted = match reg.data_type {
+                                    PlcDataType::Bool => {
+                                        let raw = data.get(1).copied().unwrap_or(0);
+                                        if raw != 0 { "ON".into() } else { "OFF".into() }
+                                    }
+                                    PlcDataType::U16 => {
+                                        let raw = data.get(1..3).map(|d| u16::from_be_bytes([d[0], d[1]])).unwrap_or(0);
+                                        if reg.scale_factor != 1.0 { format!("{:.2}", raw as f64 * reg.scale_factor) } else { format!("{}", raw) }
+                                    }
+                                    PlcDataType::I16 => {
+                                        let raw = data.get(1..3).map(|d| u16::from_be_bytes([d[0], d[1]])).unwrap_or(0) as i16;
+                                        if reg.scale_factor != 1.0 { format!("{:.2}", raw as f64 * reg.scale_factor) } else { format!("{}", raw) }
+                                    }
+                                    PlcDataType::U32 => {
+                                        let raw = data.get(1..5).map(|d| u32::from_be_bytes([d[0], d[1], d[2], d[3]])).unwrap_or(0);
+                                        if reg.scale_factor != 1.0 { format!("{:.2}", raw as f64 * reg.scale_factor) } else { format!("{}", raw) }
+                                    }
+                                    PlcDataType::Float32 => {
+                                        let raw = data.get(1..5).map(|d| u32::from_be_bytes([d[0], d[1], d[2], d[3]])).unwrap_or(0);
+                                        let f = f32::from_bits(raw);
+                                        if reg.scale_factor != 1.0 { format!("{:.3}", f as f64 * reg.scale_factor) } else { format!("{:.3}", f) }
+                                    }
+                                };
+                                let raw_bytes = data.get(1..).unwrap_or(&[]).to_vec();
+                                state.plc.register_values.insert(addr, PlcRegisterValue {
+                                    raw_u16: data.get(1..3).map(|d| u16::from_be_bytes([d[0], d[1]])).unwrap_or(0),
+                                    formatted,
+                                    last_update: chrono::Utc::now().timestamp_millis(),
+                                    raw_bytes,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Section 1: Connection & Device ──
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("PLC Control").strong().size(14.0));
@@ -85,14 +134,14 @@ pub fn render_plc_panel(ui: &mut egui::Ui, state: &mut AppState) {
         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
             egui::Grid::new("plc_grid").striped(true).min_col_width(40.0).show(ui, |ui| {
                 // Header
-                ui.label(egui::RichText::new("#").strong().small());
-                ui.label(egui::RichText::new(T::address(lang)).strong().small());
-                ui.label(egui::RichText::new(T::name(lang)).strong().small());
-                ui.label(egui::RichText::new("Type").strong().small());
-                ui.label(egui::RichText::new(T::value(lang)).strong().small());
-                ui.label(egui::RichText::new(T::unit_label(lang)).strong().small());
-                ui.label(egui::RichText::new("Age").strong().small());
-                ui.label(egui::RichText::new("Status").strong().small());
+                ui.label(egui::RichText::new("#").strong().size(12.0));
+                ui.label(egui::RichText::new(T::address(lang)).strong().size(12.0));
+                ui.label(egui::RichText::new(T::name(lang)).strong().size(12.0));
+                ui.label(egui::RichText::new("Type").strong().size(12.0));
+                ui.label(egui::RichText::new(T::value(lang)).strong().size(12.0));
+                ui.label(egui::RichText::new(T::unit_label(lang)).strong().size(12.0));
+                ui.label(egui::RichText::new("Age").strong().size(12.0));
+                ui.label(egui::RichText::new("Status").strong().size(12.0));
                 ui.end_row();
 
                 for (i, reg) in regs.iter().enumerate() {
@@ -100,16 +149,16 @@ pub fn render_plc_panel(ui: &mut egui::Ui, state: &mut AppState) {
                     let is_selected = state.plc.selected_register == Some(i);
 
                     // Row number (clickable to select)
-                    if ui.selectable_label(is_selected, format!("{}", i + 1)).clicked() {
+                    if ui.selectable_label(is_selected, egui::RichText::new(format!("{}", i + 1)).size(12.0)).clicked() {
                         state.plc.selected_register = Some(i);
                         state.plc.write_value.clear();
                     }
 
                     // Address
-                    ui.label(egui::RichText::new(format!("0x{:04X}", reg.addr)).monospace().small());
+                    ui.label(egui::RichText::new(format!("0x{:04X}", reg.addr)).monospace().size(12.0));
 
                     // Name
-                    ui.label(egui::RichText::new(&reg.name).small());
+                    ui.label(egui::RichText::new(&reg.name).size(12.0));
 
                     // Type badge
                     let type_color = match reg.data_type {
@@ -118,25 +167,25 @@ pub fn render_plc_panel(ui: &mut egui::Ui, state: &mut AppState) {
                         PlcDataType::U32 => egui::Color32::from_rgb(200, 160, 0),
                         PlcDataType::Float32 => egui::Color32::from_rgb(200, 100, 200),
                     };
-                    ui.label(egui::RichText::new(reg.data_type.label()).color(type_color).small().monospace());
+                    ui.label(egui::RichText::new(reg.data_type.label()).color(type_color).size(12.0).monospace());
 
                     // Value (with type-specific display)
                     match reg.data_type {
                         PlcDataType::Bool => {
                             let mut on = val.as_ref().map(|v| v.raw_u16 != 0).unwrap_or(false);
                             let on_text = if on { "ON" } else { "OFF" };
-                            if ui.checkbox(&mut on, on_text).changed() {
+                            if ui.checkbox(&mut on, egui::RichText::new(on_text).size(12.0)).changed() {
                                 write_coil(state, reg, on);
                             }
                         }
                         _ => {
                             let display = val.as_ref().map(|v| v.formatted.clone()).unwrap_or_else(|| "-".into());
-                            ui.label(egui::RichText::new(&display).monospace().small());
+                            ui.label(egui::RichText::new(&display).monospace().size(12.0));
                         }
                     }
 
                     // Unit
-                    ui.label(egui::RichText::new(&reg.unit).weak().small());
+                    ui.label(egui::RichText::new(&reg.unit).weak().size(12.0));
 
                     // Age
                     if let Some(ref v) = val {
@@ -147,9 +196,9 @@ pub fn render_plc_panel(ui: &mut egui::Ui, state: &mut AppState) {
                         let age_color = if age_ms < 3000 { egui::Color32::from_rgb(0, 180, 0) }
                             else if age_ms < 10000 { egui::Color32::from_rgb(180, 180, 0) }
                             else { egui::Color32::from_rgb(180, 60, 60) };
-                        ui.label(egui::RichText::new(&age_text).color(age_color).small());
+                        ui.label(egui::RichText::new(&age_text).color(age_color).size(12.0));
                     } else {
-                        ui.label(egui::RichText::new("-").weak().small());
+                        ui.label(egui::RichText::new("-").weak().size(12.0));
                     }
 
                     // Status
@@ -159,7 +208,7 @@ pub fn render_plc_panel(ui: &mut egui::Ui, state: &mut AppState) {
                         else if age < 10000 { ("●", egui::Color32::from_rgb(200, 180, 0)) }
                         else { ("●", egui::Color32::from_rgb(180, 60, 60)) }
                     } else { ("○", egui::Color32::GRAY) };
-                    ui.label(egui::RichText::new(status_icon).color(status_color));
+                    ui.label(egui::RichText::new(status_icon).color(status_color).size(12.0));
                     ui.end_row();
                 }
             });
@@ -204,65 +253,61 @@ fn plc_log(state: &mut AppState, msg: &str) {
 }
 
 fn do_read_all(state: &mut AppState) {
+    if state.plc_async_receiver.is_some() {
+        return; // Already reading
+    }
+
     let regs = get_register_defs(state);
-    for reg in &regs {
-        let qty = match reg.data_type {
-            PlcDataType::U32 | PlcDataType::Float32 => 2,
-            _ => 1,
+    let slave_id = state.plc.slave_id;
+    let port_name = state.selected_port.clone().unwrap_or_default();
+    let baud_rate = state.config.baud_rate;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    state.plc_async_receiver = Some(rx);
+
+    std::thread::spawn(move || {
+        let config = serialtap_core::config::SerialConfig {
+            port_name,
+            baud_rate,
+            ..Default::default()
         };
-        let frame = ModbusParser::build_read_request(
-            state.plc.slave_id,
-            serialtap_core::protocol::ModbusFunction::ReadHoldingRegisters,
-            reg.addr,
-            qty,
-        );
-        let req = frame.to_bytes();
-        let mut buf = [0u8; 256];
-        let result = (|| -> Result<Vec<u8>, String> {
-            let p = state.port.as_mut().ok_or("Not connected")?;
-            p.write(&req).map_err(|e| e.to_string())?;
+        let mut port = serialtap_core::SerialPort::new(config);
+        if port.connect().is_err() {
+            let _ = tx.send(Err("Connect failed".into()));
+            return;
+        }
+
+        let mut results = Vec::new();
+        for reg in &regs {
+            let qty = match reg.data_type {
+                PlcDataType::U32 | PlcDataType::Float32 => 2,
+                _ => 1,
+            };
+            let frame = ModbusParser::build_read_request(
+                slave_id,
+                serialtap_core::protocol::ModbusFunction::ReadHoldingRegisters,
+                reg.addr,
+                qty,
+            );
+            let req = frame.to_bytes();
+            if port.write(&req).is_err() {
+                results.push((reg.addr, Err("Write failed".into())));
+                continue;
+            }
             std::thread::sleep(std::time::Duration::from_millis(50));
-            let n = p.read(&mut buf).map_err(|e| e.to_string())?;
-            if n < 4 { return Err("No response".into()); }
-            Ok(buf[..n].to_vec())
-        })();
-        if let Ok(resp) = result {
-            if let Ok(f) = ModbusFrame::parse(&resp) {
-                let data = &f.data;
-                let formatted = match reg.data_type {
-                    PlcDataType::Bool => {
-                        let raw = data.get(1).copied().unwrap_or(0);
-                        let on = raw != 0;
-                        if on { "ON".into() } else { "OFF".into() }
-                    }
-                    PlcDataType::U16 => {
-                        let raw = data.get(1..3).map(|d| u16::from_be_bytes([d[0], d[1]])).unwrap_or(0);
-                        if reg.scale_factor != 1.0 { format!("{:.2}", raw as f64 * reg.scale_factor) } else { format!("{}", raw) }
-                    }
-                    PlcDataType::I16 => {
-                        let raw = data.get(1..3).map(|d| u16::from_be_bytes([d[0], d[1]])).unwrap_or(0) as i16;
-                        if reg.scale_factor != 1.0 { format!("{:.2}", raw as f64 * reg.scale_factor) } else { format!("{}", raw) }
-                    }
-                    PlcDataType::U32 => {
-                        let raw = data.get(1..5).map(|d| u32::from_be_bytes([d[0], d[1], d[2], d[3]])).unwrap_or(0);
-                        if reg.scale_factor != 1.0 { format!("{:.2}", raw as f64 * reg.scale_factor) } else { format!("{}", raw) }
-                    }
-                    PlcDataType::Float32 => {
-                        let raw = data.get(1..5).map(|d| u32::from_be_bytes([d[0], d[1], d[2], d[3]])).unwrap_or(0);
-                        let f = f32::from_bits(raw);
-                        if reg.scale_factor != 1.0 { format!("{:.3}", f as f64 * reg.scale_factor) } else { format!("{:.3}", f) }
-                    }
-                };
-                let raw_bytes = data.get(1..).unwrap_or(&[]).to_vec();
-                state.plc.register_values.insert(reg.addr, PlcRegisterValue {
-                    raw_u16: data.get(1..3).map(|d| u16::from_be_bytes([d[0], d[1]])).unwrap_or(0),
-                    formatted,
-                    last_update: chrono::Utc::now().timestamp_millis(),
-                    raw_bytes,
-                });
+            let mut buf = [0u8; 256];
+            match port.read(&mut buf) {
+                Ok(n) if n >= 4 => {
+                    results.push((reg.addr, Ok(buf[..n].to_vec())));
+                }
+                _ => {
+                    results.push((reg.addr, Err("No response".into())));
+                }
             }
         }
-    }
+        let _ = port.disconnect();
+        let _ = tx.send(Ok(results));
+    });
 }
 
 fn do_write_register(state: &mut AppState) {

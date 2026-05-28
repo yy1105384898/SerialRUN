@@ -2,10 +2,23 @@ use crate::state::{AppState, Language, T, Theme};
 use eframe::egui;
 
 /// Top bar: Logo + Tool buttons + System buttons
-pub fn render_connection_panel(ui: &mut egui::Ui, state: &mut AppState, _ctx: &egui::Context) {
+pub fn render_connection_panel(ui: &mut egui::Ui, state: &mut AppState, ctx: &egui::Context) {
     let lang = state.language;
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("S").size(22.0).strong().color(egui::Color32::from_rgb(0, 180, 120)));
+        let icon_texture_id = {
+            let icon_bytes = include_bytes!("../../icon_embedded.png");
+            image::load_from_memory(icon_bytes).ok().map(|img| {
+                let rgba = img.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let pixels = rgba.into_raw();
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                let texture = ctx.load_texture("app_icon", color_image, egui::TextureOptions::default());
+                texture.id()
+            })
+        };
+        if let Some(texture_id) = icon_texture_id {
+            ui.image(egui::ImageSource::Texture(egui::load::SizedTexture::new(texture_id, egui::vec2(20.0, 20.0))));
+        }
         ui.label(egui::RichText::new("SerialTap").size(16.0).strong());
         ui.add_space(8.0);
 
@@ -38,8 +51,14 @@ pub fn render_connection_panel(ui: &mut egui::Ui, state: &mut AppState, _ctx: &e
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button(egui::RichText::new("?").size(14.0).strong()).on_hover_text(if lang == Language::Chinese { "使用指南" } else { "Help" }).clicked() { state.show_help = !state.show_help; }
             ui.add_space(2.0);
-            let (tl, th) = match state.theme { Theme::Dark => ("\u{2600}", if lang==Language::Chinese{"浅色"}else{"Light"}), Theme::Light => ("\u{263E}", if lang==Language::Chinese{"深色"}else{"Dark"}) };
-            if ui.button(egui::RichText::new(tl).size(16.0)).on_hover_text(th).clicked() { state.theme = match state.theme { Theme::Dark => Theme::Light, Theme::Light => Theme::Dark }; }
+            // Theme button - show current theme name, click to switch
+            let (tl, th) = match state.theme {
+                Theme::Dark => ("Dark", if lang==Language::Chinese{"切换到浅色"}else{"Switch to Light"}),
+                Theme::Light => ("Light", if lang==Language::Chinese{"切换到深色"}else{"Switch to Dark"})
+            };
+            if ui.button(egui::RichText::new(tl).size(12.0).strong()).on_hover_text(th).clicked() {
+                state.theme = match state.theme { Theme::Dark => Theme::Light, Theme::Light => Theme::Dark };
+            }
             ui.add_space(2.0);
             let ll = if lang==Language::English {"EN"} else {"中"};
             let lh = if lang==Language::English {"Switch to Chinese"} else {"切换到英文"};
@@ -72,10 +91,32 @@ pub fn render_connection_controls(ui: &mut egui::Ui, state: &mut AppState) {
             if ui.small_button("Auto").on_hover_text(T::auto_detect(lang)).clicked() {
                 if let Some(ref pn) = state.selected_port {
                     let pn = pn.clone();
-                    if let Some(baud) = auto_detect_baud(&pn) {
+                    let port_ref = &state.port;
+                    let is_connected = state.is_connected;
+                    if !is_connected && port_ref.is_none() {
+                        // Run auto-detect in a thread to avoid blocking UI
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        std::thread::spawn(move || {
+                            let result = auto_detect_baud(&pn);
+                            let _ = tx.send(result);
+                        });
+                        // Store the receiver in state for polling
+                        state.auto_detect_receiver = Some(rx);
+                        state.add_log_entry(crate::state::LogLevel::Info, "Auto-detecting baud rate...");
+                    }
+                }
+            }
+        }
+        // Check for auto-detect result
+        if let Some(ref rx) = state.auto_detect_receiver {
+            if let Ok(result) = rx.try_recv() {
+                state.auto_detect_receiver = None;
+                match result {
+                    Some(baud) => {
                         state.config.baud_rate = baud;
                         state.add_log_entry(crate::state::LogLevel::Info, &format!("Auto-detected: {}", baud));
-                    } else {
+                    }
+                    None => {
                         state.add_log_entry(crate::state::LogLevel::Warning, "Auto-detect: no data received");
                     }
                 }

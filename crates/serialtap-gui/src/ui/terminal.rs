@@ -1,9 +1,40 @@
-use crate::state::{AppState, Direction, ScriptAction, ScriptCommand, T};
+use crate::state::{AppState, ChecksumMode, Direction, ScriptAction, ScriptCommand, T};
 use eframe::egui;
 use std::time::Duration;
 
 pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
+    let is_dark = state.theme == crate::state::Theme::Dark;
+
+    // Poll async read result
+    if let Some(rx) = &state.terminal_async_receiver {
+        if let Ok(result) = rx.try_recv() {
+            state.terminal_async_receiver = None;
+            if let Ok(data) = result {
+                if !data.is_empty() {
+                    state.rx_count += data.len() as u64;
+                    let received = String::from_utf8_lossy(&data).to_string();
+                    state.add_terminal_line(Direction::Rx, received.clone(), false);
+                    state.add_log_entry(crate::state::LogLevel::Info, &format!("Received {} bytes", data.len()));
+                    // Data logger
+                    super::data_logger::log_data(state, "RX", &data);
+                    // Auto-reply
+                    if state.auto_reply_enabled && !state.auto_reply_pattern.is_empty() && !state.auto_reply_response.is_empty() {
+                        if received.contains(&state.auto_reply_pattern) {
+                            let reply = state.auto_reply_response.clone();
+                            let reply_bytes = reply.as_bytes().to_vec();
+                            if let Some(ref mut p) = state.port {
+                                if let Ok(_) = p.write(&reply_bytes) {
+                                    state.add_terminal_line(Direction::Tx, reply, false);
+                                    state.add_log_entry(crate::state::LogLevel::Info, &format!("Auto-reply sent: {}", state.auto_reply_response));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Toolbar
     ui.horizontal(|ui| {
@@ -12,6 +43,15 @@ pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
         ui.checkbox(&mut state.hex_mode, "HEX");
         ui.checkbox(&mut state.show_timestamp, T::show_timestamp(lang));
         ui.checkbox(&mut state.auto_scroll, T::auto_scroll(lang));
+
+        ui.separator();
+        ui.label("CRC:");
+        let checksum = state.terminal_checksum_mode;
+        egui::ComboBox::from_id_salt("term_crc").width(100.0).selected_text(checksum.label(lang)).show_ui(ui, |ui| {
+            for &mode in ChecksumMode::all() {
+                ui.selectable_value(&mut state.terminal_checksum_mode, mode, mode.label(lang));
+            }
+        });
 
         ui.add_space(8.0);
 
@@ -32,10 +72,13 @@ pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
         .show(ui, |ui| {
             for line in &state.terminal_buffer {
                 let (color, prefix) = match line.direction {
-                    Direction::Rx => (egui::Color32::from_rgb(0, 200, 80), "\u{2193} RX"),
-                    Direction::Tx => (egui::Color32::from_rgb(80, 160, 255), "\u{2191} TX"),
-                    Direction::System => (egui::Color32::from_rgb(180, 160, 60), "\u{2699}"),
+                    Direction::Rx => (egui::Color32::from_rgb(0, 220, 100), "\u{2193} RX"),
+                    Direction::Tx => (egui::Color32::from_rgb(100, 180, 255), "\u{2191} TX"),
+                    Direction::System => (egui::Color32::from_rgb(200, 180, 80), "\u{2699} SYS"),
                 };
+                // Use darker text in light mode for better visibility
+                let content_color = if is_dark { egui::Color32::WHITE } else { egui::Color32::BLACK };
+                let ts_color = if is_dark { egui::Color32::from_rgb(150, 150, 150) } else { egui::Color32::from_rgb(100, 100, 100) };
 
                 let timestamp = if state.show_timestamp {
                     let time = chrono::DateTime::from_timestamp_millis(line.timestamp)
@@ -56,12 +99,24 @@ pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
                 };
 
                 ui.horizontal(|ui| {
+                    // Timestamp in muted color
+                    if !timestamp.is_empty() {
+                        ui.label(
+                            egui::RichText::new(&timestamp)
+                                .color(ts_color)
+                                .size(13.0)
+                                .monospace(),
+                        );
+                    }
+                    // Direction indicator with color
                     ui.label(
-                        egui::RichText::new(format!("{} {}", timestamp, prefix))
+                        egui::RichText::new(prefix)
                             .color(color)
-                            .small(),
+                            .size(13.0)
+                            .strong(),
                     );
-                    ui.label(&content);
+                    // Content
+                    ui.label(egui::RichText::new(&content).color(content_color).size(14.0));
                 });
             }
         });
@@ -88,12 +143,16 @@ pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
 fn do_send(state: &mut AppState) {
     let data = std::mem::take(&mut state.input_buffer);
     let hex_mode = state.hex_mode;
+    let checksum_mode = state.terminal_checksum_mode;
 
-    let bytes = if hex_mode {
+    let mut bytes = if hex_mode {
         parse_hex(&data).unwrap_or_default()
     } else {
         data.as_bytes().to_vec()
     };
+
+    // Apply CRC checksum if enabled
+    bytes = checksum_mode.append_checksum(&bytes);
 
     let display = if hex_mode {
         data.clone()
@@ -101,7 +160,7 @@ fn do_send(state: &mut AppState) {
         data.replace("\r", "\\r").replace("\n", "\\n")
     };
 
-    // Write and read without holding port borrow across state mutations
+    // Write without holding port borrow across state mutations
     let write_result = if let Some(ref mut port) = state.port {
         port.write(&bytes).map(|n| {
             state.tx_count += n as u64;
@@ -133,34 +192,38 @@ fn do_send(state: &mut AppState) {
         }
     }
 
-    // Try to read response
-    let mut buf = [0u8; 1024];
-    std::thread::sleep(Duration::from_millis(50));
-    if let Some(ref mut port) = state.port {
-        match port.read(&mut buf) {
-            Ok(n) if n > 0 => {
-                state.rx_count += n as u64;
-                let received = String::from_utf8_lossy(&buf[..n]).to_string();
-                state.add_terminal_line(Direction::Rx, received.clone(), false);
-                state.add_log_entry(crate::state::LogLevel::Info, &format!("Received {} bytes", n));
-                // Data logger
-                super::data_logger::log_data(state, "RX", &buf[..n]);
-                // Auto-reply
-                if state.auto_reply_enabled && !state.auto_reply_pattern.is_empty() && !state.auto_reply_response.is_empty() {
-                    if received.contains(&state.auto_reply_pattern) {
-                        let reply = state.auto_reply_response.clone();
-                        let reply_bytes = reply.as_bytes().to_vec();
-                        if let Some(ref mut p) = state.port {
-                            if let Ok(_) = p.write(&reply_bytes) {
-                                state.add_terminal_line(Direction::Tx, reply, false);
-                                state.add_log_entry(crate::state::LogLevel::Info, &format!("Auto-reply sent: {}", state.auto_reply_response));
-                            }
-                        }
+    // Start async read in background thread
+    if state.terminal_async_receiver.is_none() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let port_name = state.selected_port.clone().unwrap_or_default();
+        let baud_rate = state.config.baud_rate;
+        state.terminal_async_receiver = Some(rx);
+        std::thread::spawn(move || {
+            // Wait a bit for response
+            std::thread::sleep(Duration::from_millis(50));
+            // Try to read
+            let config = serialtap_core::config::SerialConfig {
+                port_name,
+                baud_rate,
+                ..Default::default()
+            };
+            let mut port = serialtap_core::SerialPort::new(config);
+            if port.connect().is_ok() {
+                let mut buf = [0u8; 1024];
+                match port.read(&mut buf) {
+                    Ok(n) if n > 0 => {
+                        let data = buf[..n].to_vec();
+                        let _ = tx.send(Ok(data));
+                    }
+                    _ => {
+                        let _ = tx.send(Ok(Vec::new()));
                     }
                 }
+                let _ = port.disconnect();
+            } else {
+                let _ = tx.send(Err("Failed to connect for read".into()));
             }
-            _ => {}
-        }
+        });
     }
 }
 
