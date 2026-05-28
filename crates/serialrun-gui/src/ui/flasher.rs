@@ -223,23 +223,21 @@ fn flasher_flash(state: &mut AppState) {
     let (tx, rx) = std::sync::mpsc::channel();
     let port_name = state.selected_port.clone().unwrap_or_default();
     let baud_rate = state.config.baud_rate;
+    let mcu = state.flasher_mcu;
     state.flasher_async_receiver = Some(rx);
     state.flasher_progress = 0.0;
     flasher_log(state, &format!("Reading firmware from {}...", firmware_path));
 
     std::thread::spawn(move || {
-        // Read file in background thread
         let path = match std::fs::read(&firmware_path) {
             Ok(data) => data,
-            Err(e) => {
-                let _ = tx.send(Err(format!("Read error: {}", e)));
-                return;
-            }
+            Err(e) => { let _ = tx.send(Err(format!("Read error: {}", e))); return; }
         };
 
         let config = serialrun_core::config::SerialConfig {
             port_name,
             baud_rate,
+            timeout_ms: 500,
             ..Default::default()
         };
         let mut port = serialrun_core::SerialPort::new(config);
@@ -248,19 +246,56 @@ fn flasher_flash(state: &mut AppState) {
             return;
         }
 
+        let flasher = serialrun_core::protocol::flasher::Stm32Flasher::new();
+
+        // Send init sequence
+        if port.write(&[0x7F]).is_err() {
+            let _ = port.disconnect();
+            let _ = tx.send(Err("Init write failed".into()));
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let mut buf = [0u8; 32];
+        match port.read(&mut buf) {
+            Ok(n) if n > 0 && buf[0] == 0x79 => {}
+            _ => {
+                let _ = port.disconnect();
+                let _ = tx.send(Err("No ACK from bootloader. Check BOOT0 pin.".into()));
+                return;
+            }
+        }
+
+        // Flash in 128-byte chunks using STM32 write memory command
         let chunk_size = 128;
         let total = path.len();
         let mut offset = 0;
+        let mut addr: u32 = 0x08000000; // STM32 flash start
+
         while offset < total {
             let end = (offset + chunk_size).min(total);
-            if port.write(&path[offset..end]).is_err() {
+            let chunk = &path[offset..end];
+
+            let cmd = flasher.write_memory(addr, chunk);
+            if port.write(&cmd).is_err() {
                 let _ = port.disconnect();
-                let _ = tx.send(Err("Write failed".into()));
+                let _ = tx.send(Err(format!("Write failed at offset 0x{:X}", offset)));
                 return;
             }
-            offset = end;
             std::thread::sleep(std::time::Duration::from_millis(10));
+            let mut ack = [0u8; 8];
+            match port.read(&mut ack) {
+                Ok(n) if n > 0 && ack[0] == 0x79 => {}
+                _ => {
+                    let _ = port.disconnect();
+                    let _ = tx.send(Err(format!("No ACK at offset 0x{:X}", offset)));
+                    return;
+                }
+            }
+
+            offset = end;
+            addr += chunk.len() as u32;
         }
+
         let _ = port.disconnect();
         let _ = tx.send(Ok(format!("Flash complete! {} bytes written.", total)));
     });

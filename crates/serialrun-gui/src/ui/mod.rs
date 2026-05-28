@@ -1,3 +1,4 @@
+pub mod bridge;
 pub mod can_analyzer;
 pub mod charts;
 pub mod checksum;
@@ -15,5 +16,6 @@ pub mod plugin;
 pub mod register_editor;
 pub mod serial_scope;
 pub mod settings;
+pub mod simulator;
 pub mod status;
 pub mod terminal;

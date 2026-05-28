@@ -1,6 +1,5 @@
 use crate::state::{AppState, ChecksumMode, Direction, ScriptAction, ScriptCommand, T};
 use eframe::egui;
-use std::time::Duration;
 
 pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
@@ -13,6 +12,7 @@ pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
             if let Ok(data) = result {
                 if !data.is_empty() {
                     state.rx_count += data.len() as u64;
+                    state.add_chart_data(data.len() as f64);
                     let received = String::from_utf8_lossy(&data).to_string();
                     state.add_terminal_line(Direction::Rx, received.clone(), false);
                     state.add_log_entry(crate::state::LogLevel::Info, &format!("Received {} bytes", data.len()));
@@ -43,11 +43,6 @@ pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
                 state.add_log_entry(crate::state::LogLevel::Error, &format!("Auto-reply error: {}", e));
             }
         }
-    }
-
-    // Poll async write result (for chained read-after-write)
-    if let Some(ref rx) = state.terminal_async_receiver {
-        // Already handled above
     }
 
     // Toolbar
@@ -169,14 +164,11 @@ fn do_send(state: &mut AppState) {
         data.replace("\r", "\\r").replace("\n", "\\n")
     };
 
-    let port_name = state.selected_port.clone().unwrap_or_default();
-    let baud_rate = state.config.baud_rate;
     state.tx_count += bytes.len() as u64;
+    state.add_chart_data(bytes.len() as f64);
     state.add_terminal_line(Direction::Tx, display, false);
     state.add_log_entry(crate::state::LogLevel::Info, &format!("Sent {} bytes", bytes.len()));
-    // Data logger
     super::data_logger::log_data(state, "TX", &bytes);
-    // Recording
     if state.recording {
         state.script_commands.push(ScriptCommand {
             delay_ms: 0,
@@ -185,36 +177,38 @@ fn do_send(state: &mut AppState) {
         });
     }
 
-    // Async write, then async read
-    let write_bytes = bytes.clone();
+    // Write directly on existing connected port (fast, non-blocking)
+    if let Some(ref mut port) = state.port {
+        if port.write(&bytes).is_err() {
+            state.add_log_entry(crate::state::LogLevel::Error, "Write failed");
+            return;
+        }
+    } else {
+        state.add_log_entry(crate::state::LogLevel::Error, "Not connected");
+        return;
+    }
+
+    // Background read with timeout
+    let port_name = state.selected_port.clone().unwrap_or_default();
+    let baud_rate = state.config.baud_rate;
     let (tx, rx) = std::sync::mpsc::channel();
     state.terminal_async_receiver = Some(rx);
     std::thread::spawn(move || {
         let config = serialrun_core::config::SerialConfig {
-            port_name: port_name.clone(),
+            port_name,
             baud_rate,
+            timeout_ms: 100,
             ..Default::default()
         };
         let mut port = serialrun_core::SerialPort::new(config);
         if port.connect().is_err() {
-            let _ = tx.send(Err("Connect failed".into()));
+            let _ = tx.send(Ok(Vec::new()));
             return;
         }
-        if port.write(&write_bytes).is_err() {
-            let _ = port.disconnect();
-            let _ = tx.send(Err("Write failed".into()));
-            return;
-        }
-        // Wait for response
-        std::thread::sleep(Duration::from_millis(50));
         let mut buf = [0u8; 1024];
         match port.read(&mut buf) {
-            Ok(n) if n > 0 => {
-                let _ = tx.send(Ok(buf[..n].to_vec()));
-            }
-            _ => {
-                let _ = tx.send(Ok(Vec::new()));
-            }
+            Ok(n) if n > 0 => { let _ = tx.send(Ok(buf[..n].to_vec())); }
+            _ => { let _ = tx.send(Ok(Vec::new())); }
         }
         let _ = port.disconnect();
     });

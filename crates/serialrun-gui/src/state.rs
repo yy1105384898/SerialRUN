@@ -464,6 +464,22 @@ impl T {
     pub fn flash(l: Language) -> &'static str { match l { Language::English => "Flash", Language::Chinese => "烧录" } }
     pub fn scan(l: Language) -> &'static str { match l { Language::English => "Scan", Language::Chinese => "扫描" } }
     pub fn capture(l: Language) -> &'static str { match l { Language::English => "Capture", Language::Chinese => "采集" } }
+    // Bridge
+    pub fn bridge(l: Language) -> &'static str { match l { Language::English => "TCP/RTU Bridge", Language::Chinese => "TCP/RTU 桥接" } }
+    pub fn tcp_port(l: Language) -> &'static str { match l { Language::English => "TCP Port", Language::Chinese => "TCP 端口" } }
+    pub fn start_bridge(l: Language) -> &'static str { match l { Language::English => "Start Bridge", Language::Chinese => "启动桥接" } }
+    pub fn stop_bridge(l: Language) -> &'static str { match l { Language::English => "Stop Bridge", Language::Chinese => "停止桥接" } }
+    pub fn timeout_ms(l: Language) -> &'static str { match l { Language::English => "Timeout (ms)", Language::Chinese => "超时 (ms)" } }
+    pub fn bridge_log(l: Language) -> &'static str { match l { Language::English => "Bridge Log", Language::Chinese => "桥接日志" } }
+    // Simulator
+    pub fn simulator(l: Language) -> &'static str { match l { Language::English => "HMI Simulator", Language::Chinese => "HMI 模拟器" } }
+    pub fn sim_mode(l: Language) -> &'static str { match l { Language::English => "Mode", Language::Chinese => "模式" } }
+    pub fn start_sim(l: Language) -> &'static str { match l { Language::English => "Start Simulator", Language::Chinese => "启动模拟器" } }
+    pub fn stop_sim(l: Language) -> &'static str { match l { Language::English => "Stop Simulator", Language::Chinese => "停止模拟器" } }
+    pub fn holding_registers(l: Language) -> &'static str { match l { Language::English => "Holding Registers", Language::Chinese => "保持寄存器" } }
+    pub fn coils(l: Language) -> &'static str { match l { Language::English => "Coils", Language::Chinese => "线圈" } }
+    pub fn set_value(l: Language) -> &'static str { match l { Language::English => "Set", Language::Chinese => "设置" } }
+    pub fn sim_log(l: Language) -> &'static str { match l { Language::English => "Simulator Log", Language::Chinese => "模拟器日志" } }
 }
 
 // ── Modbus types ──
@@ -556,6 +572,47 @@ impl ChecksumMode {
     }
 }
 
+// ── Bridge types ──
+#[derive(Clone)]
+pub struct BridgeState {
+    pub running: bool,
+    pub tcp_port: u16,
+    pub serial_port_name: String,
+    pub baud_rate: u32,
+    pub timeout_ms: u64,
+    pub log: VecDeque<BridgeLogEntry>,
+    pub status_msg: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct BridgeLogEntry { pub timestamp: i64, pub client_addr: String, pub direction: String, pub request_hex: String, pub response_hex: String, pub success: bool }
+
+// ── Simulator types ──
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SimMode { TcpServer, RtuSlave }
+impl SimMode { pub fn label(&self, l: Language) -> &'static str { match (self, l) { (Self::TcpServer, Language::English)=>"TCP Server", (Self::TcpServer, Language::Chinese)=>"TCP 服务器", (Self::RtuSlave, Language::English)=>"RTU Slave", (Self::RtuSlave, Language::Chinese)=>"RTU 从站" } } }
+
+#[derive(Clone)]
+pub struct SimulatorState {
+    pub running: bool,
+    pub mode: SimMode,
+    pub tcp_port: u16,
+    pub serial_port_name: String,
+    pub baud_rate: u32,
+    pub slave_id: u8,
+    pub holding_registers: HashMap<u16, u16>,
+    pub input_registers: HashMap<u16, u16>,
+    pub coils: HashMap<u16, bool>,
+    pub discrete_inputs: HashMap<u16, bool>,
+    pub edit_addr: String,
+    pub edit_value: String,
+    pub log: VecDeque<SimulatorLogEntry>,
+    pub status_msg: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct SimulatorLogEntry { pub timestamp: i64, pub direction: String, pub hex: String, pub decoded: String, pub success: bool }
+
 // ── CAN types ──
 #[derive(Clone)]
 pub struct CanFrameData { pub timestamp: i64, pub id: u32, pub is_ext: bool, pub dlc: u8, pub data: Vec<u8>, pub is_error: bool }
@@ -639,6 +696,8 @@ pub struct AppState {
     pub show_flasher_window: bool,
     pub show_register_editor_window: bool,
     pub show_plugin_window: bool,
+    pub show_bridge_window: bool,
+    pub show_simulator_window: bool,
     pub checksum_mode: ChecksumMode,
     pub checksum_input: String,
     // CAN
@@ -694,6 +753,16 @@ pub struct AppState {
     // File transfer async
     pub file_transfer_thread: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     pub file_transfer_progress_rx: Option<std::sync::mpsc::Receiver<(u64, u64)>>,
+    // Bridge & Simulator
+    pub bridge: BridgeState,
+    pub simulator: SimulatorState,
+    pub bridge_stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    pub bridge_log_rx: Option<std::sync::mpsc::Receiver<serialrun_core::protocol::BridgeLogEntry>>,
+    pub bridge_err_rx: Option<std::sync::mpsc::Receiver<String>>,
+    pub sim_stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    pub sim_log_rx: Option<std::sync::mpsc::Receiver<serialrun_core::protocol::SimulatorLogEntry>>,
+    pub sim_err_rx: Option<std::sync::mpsc::Receiver<String>>,
+    pub sim_registers: Option<std::sync::Arc<std::sync::Mutex<serialrun_core::protocol::SimulatorState>>>,
 }
 
 #[derive(Clone)]
@@ -820,6 +889,7 @@ impl AppState {
             show_data_logger_window: false, data_logger_recording: false, data_logger_path: String::new(), data_logger_buffered: 0,
             show_can_window: false, show_i2c_spi_window: false, show_scope_window: false, show_flasher_window: false,
             show_register_editor_window: false, show_plugin_window: false,
+            show_bridge_window: false, show_simulator_window: false,
             checksum_mode: ChecksumMode::None, checksum_input: String::new(),
             can_capturing: false, can_frames: Vec::new(), can_filter_id: String::new(), can_stats: CanStats::default(),
             can_show_stats: false, can_tx_id: String::new(), can_tx_data: String::new(),
@@ -845,6 +915,19 @@ impl AppState {
             scope_reader: None,
             file_transfer_thread: None,
             file_transfer_progress_rx: None,
+            bridge: BridgeState {
+                running: false, tcp_port: 502, serial_port_name: String::new(), baud_rate: 9600, timeout_ms: 500,
+                log: VecDeque::new(), status_msg: None,
+            },
+            simulator: SimulatorState {
+                running: false, mode: SimMode::TcpServer, tcp_port: 502, serial_port_name: String::new(), baud_rate: 9600,
+                slave_id: 1, holding_registers: (0..10).map(|i| (i, 0u16)).collect(),
+                input_registers: HashMap::new(), coils: (0..16).map(|i| (i, false)).collect(),
+                discrete_inputs: HashMap::new(), edit_addr: "0".into(), edit_value: "0".into(),
+                log: VecDeque::new(), status_msg: None,
+            },
+            bridge_stop: None, bridge_log_rx: None, bridge_err_rx: None,
+            sim_stop: None, sim_log_rx: None, sim_err_rx: None, sim_registers: None,
         }
     }
 

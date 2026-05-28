@@ -21,7 +21,7 @@ If you don't know the baud rate, click the **Auto** button to auto-detect.
 
 ### Top Toolbar
 
-The toolbar contains 13 function buttons. Click to open/close the corresponding window:
+The toolbar contains 15 function buttons. Click to open/close the corresponding window:
 
 | Button | Function | Description |
 |--------|----------|-------------|
@@ -29,6 +29,8 @@ The toolbar contains 13 function buttons. Click to open/close the corresponding 
 | Chart | Data Chart | Real-time data rate curve |
 | PLC | PLC Controller | Supports Siemens, Mitsubishi, Delta, Omron |
 | Mod | Modbus Debug | Quick register read/write, 8 function codes |
+| Bridge | TCP/RTU Bridge | Bridge Modbus TCP clients to serial RTU devices |
+| Sim | HMI Simulator | Simulate virtual Modbus slave (TCP/RTU) |
 | FT | File Transfer | XMODEM/YMODEM/ZMODEM protocols |
 | FB | Frame Builder | Manual Modbus frame construction |
 | DL | Data Logger | Log serial data to CSV file |
@@ -105,13 +107,42 @@ Three collapsible sections:
 
 ### PLC Controller
 
-Supports Modbus communication with major PLC brands:
-- **Brands**: Siemens, Mitsubishi, Delta, Omron, Custom
-- **Data Types**: BOOL, UINT16, INT16, UINT32, FLOAT
-- Register table shows address, name, type, value, scale factor, unit
-- BOOL registers can be toggled via checkbox
-- Supports read-all and single-read modes
-- Auto-poll mode with configurable interval (200-10000ms)
+Professional minimalist PLC monitoring panel:
+- **Brands**: Siemens S7-1200, Mitsubishi FX3U, Delta DVP, Omron CP1H, Custom
+- **Data Types**: BOOL, UINT16, INT16, UINT32, FLOAT32
+- **Batch Read**: Contiguous registers are coalesced into single Modbus requests for faster polling
+- **Inline Write**: Click a register row to edit and write values directly
+- **Scale Factor**: Values are automatically scaled on read; writes apply inverse scaling (e.g., type "25.0" → writes 250 if scale is 0.1)
+- **Per-register Status**: Green/yellow/red dot indicates data freshness (<3s / <10s / stale)
+- **Error Display**: Failed reads show error in the value column
+- **Auto-poll**: Configurable interval (100-10000ms), click "Poll" to start, "Stop" to halt
+
+### TCP/RTU Bridge
+
+Bridges Modbus TCP clients to serial RTU devices. External SCADA/HMI software can communicate with serial devices via TCP.
+
+- **TCP Port** — Listen port for TCP connections (default 502)
+- **Serial Port** — Target serial port connected to RTU device
+- **Baud Rate** — Serial communication speed
+- **Timeout** — Response timeout in milliseconds
+- **Start/Stop** — Toggle bridge operation
+- **Bridge Log** — Shows all bridged requests/responses with timestamps
+
+Workflow: Configure TCP port and serial settings → Click "Start Bridge" → External TCP clients can now access the serial device.
+
+### HMI Simulator
+
+Simulates a virtual Modbus slave device. Useful for testing PLC programs, SCADA systems, or Modbus master software without physical hardware.
+
+- **Mode** — TCP Server (listen for TCP connections) or RTU Slave (respond on serial port)
+- **TCP Port** — Listen port (TCP mode)
+- **Serial Port / Baud Rate** — Serial settings (RTU mode)
+- **Slave ID** — Modbus slave address (0-247)
+- **Holding Registers** — Edit register values (0-65535), add new registers
+- **Coils** — Toggle coil on/off states, add new coils
+- **Simulator Log** — Shows all received requests and responses
+
+Workflow: Configure mode and settings → Set register/coil values → Click "Start Simulator" → Modbus masters can read/write the virtual registers.
 
 ### File Transfer
 
@@ -237,6 +268,9 @@ A: Ensure the device is sending data. Auto-detection requires data output during
 
 **Q: Modbus communication no response?**
 A: Check slave address, verify function code and address range, validate CRC checksum.
+
+**Q: PLC register shows ERR?**
+A: The register read failed. Check wiring, slave ID, and ensure the register address exists on the PLC.
 
 **Q: File transfer fails?**
 A: Ensure both sides use the same protocol, check serial connection stability, try lowering the baud rate.

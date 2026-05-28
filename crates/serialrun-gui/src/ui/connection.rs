@@ -23,16 +23,17 @@ pub fn render_connection_panel(ui: &mut egui::Ui, state: &mut AppState, ctx: &eg
         ui.add_space(8.0);
 
         let mut toggled: Option<usize> = None;
-        let buttons: [(&str, &str, &str); 13] = [
+        let buttons: [(&str, &str, &str); 15] = [
             ("Log", "日志", "Log"), ("Chart", "图表", "Chart"),
             ("PLC", "PLC 控制", "PLC"), ("Mod", "Modbus", "Modbus"),
+            ("TCP", "TCP 桥接", "TCP Bridge"), ("HMI", "HMI 模拟器", "HMI Sim"),
             ("FT", "文件传输", "File Transfer"), ("FB", "帧生成器", "Frame Builder"), ("DL", "数据记录", "Data Logger"),
             ("CAN", "CAN 总线", "CAN Bus"), ("I2C", "I2C/SPI", "I2C/SPI"),
             ("Scope", "示波器", "Oscilloscope"), ("Flash", "烧录器", "Flasher"), ("Reg", "寄存器编辑", "Reg Editor"),
             ("Plug", "插件", "Plugins"),
         ];
         for (i, (label, zh, en)) in buttons.iter().enumerate() {
-            if i == 2 || i == 7 || i == 12 { ui.separator(); }
+            if i == 2 || i == 9 || i == 14 { ui.separator(); }
             let tooltip = match lang { Language::Chinese => *zh, Language::English => *en };
             if ui.small_button(*label).on_hover_text(tooltip).clicked() { toggled = Some(i); }
         }
@@ -40,11 +41,12 @@ pub fn render_connection_panel(ui: &mut egui::Ui, state: &mut AppState, ctx: &eg
             match i {
                 0 => state.show_log_window = !state.show_log_window, 1 => state.show_chart_window = !state.show_chart_window,
                 2 => state.show_plc_window = !state.show_plc_window, 3 => state.show_modbus_window = !state.show_modbus_window,
-                4 => state.show_file_transfer_window = !state.show_file_transfer_window, 5 => state.show_frame_builder_window = !state.show_frame_builder_window,
-                6 => state.show_data_logger_window = !state.show_data_logger_window, 7 => state.show_can_window = !state.show_can_window,
-                8 => state.show_i2c_spi_window = !state.show_i2c_spi_window, 9 => state.show_scope_window = !state.show_scope_window,
-                10 => state.show_flasher_window = !state.show_flasher_window, 11 => state.show_register_editor_window = !state.show_register_editor_window,
-                12 => state.show_plugin_window = !state.show_plugin_window, _ => {}
+                4 => state.show_bridge_window = !state.show_bridge_window, 5 => state.show_simulator_window = !state.show_simulator_window,
+                6 => state.show_file_transfer_window = !state.show_file_transfer_window, 7 => state.show_frame_builder_window = !state.show_frame_builder_window,
+                8 => state.show_data_logger_window = !state.show_data_logger_window, 9 => state.show_can_window = !state.show_can_window,
+                10 => state.show_i2c_spi_window = !state.show_i2c_spi_window, 11 => state.show_scope_window = !state.show_scope_window,
+                12 => state.show_flasher_window = !state.show_flasher_window, 13 => state.show_register_editor_window = !state.show_register_editor_window,
+                14 => state.show_plugin_window = !state.show_plugin_window, _ => {}
             }
         }
 
@@ -130,7 +132,8 @@ pub fn render_connection_controls(ui: &mut egui::Ui, state: &mut AppState) {
             }
         } else if ui.button(egui::RichText::new(T::connect(lang)).color(egui::Color32::from_rgb(0, 180, 120))).clicked() {
             if let Some(ref pn) = state.selected_port {
-                let config = serialrun_core::config::SerialConfig { port_name: pn.clone(), baud_rate: state.config.baud_rate, ..Default::default() };
+                let mut config = state.config.clone();
+                config.port_name = pn.clone();
                 let mut port = serialrun_core::SerialPort::new(config);
                 match port.connect() {
                     Ok(()) => { state.is_connected = true; state.port = Some(port); state.add_log_entry(crate::state::LogLevel::Info, &format!("Connected to {}", pn)); }

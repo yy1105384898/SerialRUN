@@ -127,6 +127,57 @@ impl SerialRunMcp {
                                 },
                                 "required": ["command"]
                             }
+                        },
+                        {
+                            "name": "modbus_read",
+                            "description": "Read Modbus RTU holding registers",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "slave_id": { "type": "integer", "description": "Slave ID (1-247)", "default": 1 },
+                                    "address": { "type": "integer", "description": "Start register address" },
+                                    "quantity": { "type": "integer", "description": "Number of registers to read (default: 1)" }
+                                },
+                                "required": ["address"]
+                            }
+                        },
+                        {
+                            "name": "modbus_write",
+                            "description": "Write a Modbus RTU holding register",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "slave_id": { "type": "integer", "description": "Slave ID (1-247)", "default": 1 },
+                                    "address": { "type": "integer", "description": "Register address" },
+                                    "value": { "type": "integer", "description": "Value to write (u16)" }
+                                },
+                                "required": ["address", "value"]
+                            }
+                        },
+                        {
+                            "name": "plc_read",
+                            "description": "Read all registers from a PLC preset (Siemens/Mitsubishi/Delta/Omron)",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "brand": { "type": "string", "description": "PLC brand: Siemens, Mitsubishi, Delta, Omron", "default": "Siemens" },
+                                    "slave_id": { "type": "integer", "description": "Slave ID (1-247)", "default": 1 }
+                                }
+                            }
+                        },
+                        {
+                            "name": "plc_write",
+                            "description": "Write to a PLC register by address",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "brand": { "type": "string", "description": "PLC brand: Siemens, Mitsubishi, Delta, Omron", "default": "Siemens" },
+                                    "slave_id": { "type": "integer", "description": "Slave ID (1-247)", "default": 1 },
+                                    "address": { "type": "integer", "description": "Register address" },
+                                    "value": { "type": "number", "description": "Value to write (will be scaled if register has scale_factor)" }
+                                },
+                                "required": ["address", "value"]
+                            }
                         }
                     ]
                 });
@@ -237,7 +288,7 @@ impl SerialRunMcp {
                     }
                     "send_command" => {
                         let command = arguments.get("command").and_then(|v| v.as_str()).unwrap_or("");
-                        let _timeout_ms = arguments.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(1000) as u64;
+                        let timeout_ms = arguments.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(1000) as u64;
 
                         if command.is_empty() {
                             return McpResponse::error(request.id, -32602, "Command is required".into());
@@ -247,7 +298,6 @@ impl SerialRunMcp {
                             return McpResponse::error(request.id, -1, "Not connected".into());
                         };
 
-                        // Send command
                         let mut cmd_bytes = command.as_bytes().to_vec();
                         if !command.ends_with("\r\n") && !command.ends_with('\n') && !command.ends_with('\r') {
                             cmd_bytes.extend_from_slice(b"\r\n");
@@ -257,8 +307,7 @@ impl SerialRunMcp {
                             return McpResponse::error(request.id, -1, e.to_string());
                         }
 
-                        // Wait and read response
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        std::thread::sleep(std::time::Duration::from_millis(timeout_ms));
                         let mut buf = vec![0u8; 4096];
                         match port.read(&mut buf) {
                             Ok(n) => {
@@ -268,6 +317,202 @@ impl SerialRunMcp {
                                 }))
                             }
                             Err(e) => McpResponse::error(request.id, -1, e.to_string())
+                        }
+                    }
+                    "modbus_read" => {
+                        let slave_id = arguments.get("slave_id").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+                        let address = match arguments.get("address").and_then(|v| v.as_u64()) {
+                            Some(a) => a as u16,
+                            None => return McpResponse::error(request.id, -32602, "address is required".into()),
+                        };
+                        let quantity = arguments.get("quantity").and_then(|v| v.as_u64()).unwrap_or(1) as u16;
+
+                        let Some(ref mut port) = self.port else {
+                            return McpResponse::error(request.id, -1, "Not connected".into());
+                        };
+
+                        use serialrun_core::protocol::{ModbusFrame, ModbusParser, ModbusFunction};
+                        let frame = ModbusParser::build_read_request(slave_id, ModbusFunction::ReadHoldingRegisters, address, quantity);
+                        let req = frame.to_bytes();
+                        if let Err(e) = port.write(&req) {
+                            return McpResponse::error(request.id, -1, format!("Write failed: {}", e));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        let mut buf = [0u8; 256];
+                        match port.read(&mut buf) {
+                            Ok(n) if n >= 4 => {
+                                match ModbusFrame::parse(&buf[..n]) {
+                                    Ok(f) => {
+                                        let hex = buf[..n].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                                        let mut values = Vec::new();
+                                        let data = &f.data;
+                                        let mut i = 1; // skip byte count
+                                        while i + 1 < data.len() {
+                                            values.push(u16::from_be_bytes([data[i], data[i+1]]));
+                                            i += 2;
+                                        }
+                                        McpResponse::success(request.id, serde_json::json!({
+                                            "content": [{ "type": "text", "text": format!("Read {} registers from slave {}\nHEX: {}\nValues: {:?}", quantity, slave_id, hex, values) }]
+                                        }))
+                                    }
+                                    Err(e) => McpResponse::error(request.id, -1, format!("Parse error: {}", e))
+                                }
+                            }
+                            _ => McpResponse::error(request.id, -1, "No response".into())
+                        }
+                    }
+                    "modbus_write" => {
+                        let slave_id = arguments.get("slave_id").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+                        let address = match arguments.get("address").and_then(|v| v.as_u64()) {
+                            Some(a) => a as u16,
+                            None => return McpResponse::error(request.id, -32602, "address is required".into()),
+                        };
+                        let value = match arguments.get("value").and_then(|v| v.as_u64()) {
+                            Some(v) => v as u16,
+                            None => return McpResponse::error(request.id, -32602, "value is required".into()),
+                        };
+
+                        let Some(ref mut port) = self.port else {
+                            return McpResponse::error(request.id, -1, "Not connected".into());
+                        };
+
+                        use serialrun_core::protocol::{ModbusFrame, ModbusParser};
+                        let frame = ModbusParser::build_write_single(slave_id, address, value);
+                        let req = frame.to_bytes();
+                        if let Err(e) = port.write(&req) {
+                            return McpResponse::error(request.id, -1, format!("Write failed: {}", e));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        let mut buf = [0u8; 256];
+                        match port.read(&mut buf) {
+                            Ok(n) if n >= 4 => {
+                                let hex = buf[..n].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                                McpResponse::success(request.id, serde_json::json!({
+                                    "content": [{ "type": "text", "text": format!("Wrote {} to register 0x{:04X} (slave {})\nResponse: {}", value, address, slave_id, hex) }]
+                                }))
+                            }
+                            _ => McpResponse::error(request.id, -1, "No response".into())
+                        }
+                    }
+                    "plc_read" => {
+                        let brand_name = arguments.get("brand").and_then(|v| v.as_str()).unwrap_or("Siemens");
+                        let slave_id = arguments.get("slave_id").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+
+                        let brand = match brand_name {
+                            "Siemens" | "siemens" => crate::state::PlcBrand::Siemens,
+                            "Mitsubishi" | "mitsubishi" => crate::state::PlcBrand::Mitsubishi,
+                            "Delta" | "delta" => crate::state::PlcBrand::Delta,
+                            "Omron" | "omron" => crate::state::PlcBrand::Omron,
+                            _ => return McpResponse::error(request.id, -32602, format!("Unknown brand: {}. Use Siemens, Mitsubishi, Delta, Omron", brand_name)),
+                        };
+
+                        let models = crate::plc_presets::get_models(brand);
+                        let regs = models.first().map(|m| m.registers.clone()).unwrap_or_default();
+                        if regs.is_empty() {
+                            return McpResponse::error(request.id, -1, "No registers defined for this brand".into());
+                        }
+
+                        let Some(ref mut port) = self.port else {
+                            return McpResponse::error(request.id, -1, "Not connected".into());
+                        };
+
+                        use serialrun_core::protocol::{ModbusFrame, ModbusParser, ModbusFunction};
+                        let mut results = Vec::new();
+                        for reg in &regs {
+                            let qty = match reg.data_type {
+                                crate::state::PlcDataType::U32 | crate::state::PlcDataType::Float32 => 2,
+                                _ => 1,
+                            };
+                            let frame = ModbusParser::build_read_request(slave_id, ModbusFunction::ReadHoldingRegisters, reg.addr, qty);
+                            let req = frame.to_bytes();
+                            if port.write(&req).is_err() {
+                                results.push(serde_json::json!({"addr": reg.addr, "name": reg.name, "error": "write failed"}));
+                                continue;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                            let mut buf = [0u8; 256];
+                            match port.read(&mut buf) {
+                                Ok(n) if n >= 4 => {
+                                    if let Ok(f) = ModbusFrame::parse(&buf[..n]) {
+                                        let data = &f.data;
+                                        let val_str = match reg.data_type {
+                                            crate::state::PlcDataType::Bool => {
+                                                let raw = data.get(1).copied().unwrap_or(0);
+                                                if raw != 0 { "ON".into() } else { "OFF".into() }
+                                            }
+                                            crate::state::PlcDataType::U16 => {
+                                                let raw = data.get(1..3).map(|d| u16::from_be_bytes([d[0], d[1]])).unwrap_or(0);
+                                                if reg.scale_factor != 1.0 { format!("{:.2}", raw as f64 * reg.scale_factor) } else { format!("{}", raw) }
+                                            }
+                                            crate::state::PlcDataType::I16 => {
+                                                let raw = data.get(1..3).map(|d| u16::from_be_bytes([d[0], d[1]])).unwrap_or(0) as i16;
+                                                if reg.scale_factor != 1.0 { format!("{:.2}", raw as f64 * reg.scale_factor) } else { format!("{}", raw) }
+                                            }
+                                            crate::state::PlcDataType::U32 => {
+                                                let raw = data.get(1..5).map(|d| u32::from_be_bytes([d[0], d[1], d[2], d[3]])).unwrap_or(0);
+                                                if reg.scale_factor != 1.0 { format!("{:.2}", raw as f64 * reg.scale_factor) } else { format!("{}", raw) }
+                                            }
+                                            crate::state::PlcDataType::Float32 => {
+                                                let raw = data.get(1..5).map(|d| u32::from_be_bytes([d[0], d[1], d[2], d[3]])).unwrap_or(0);
+                                                let f = f32::from_bits(raw);
+                                                if reg.scale_factor != 1.0 { format!("{:.3}", f as f64 * reg.scale_factor) } else { format!("{:.3}", f) }
+                                            }
+                                        };
+                                        results.push(serde_json::json!({"addr": reg.addr, "name": reg.name, "type": reg.data_type.label(), "value": val_str, "unit": reg.unit}));
+                                    } else {
+                                        results.push(serde_json::json!({"addr": reg.addr, "name": reg.name, "error": "parse error"}));
+                                    }
+                                }
+                                _ => {
+                                    results.push(serde_json::json!({"addr": reg.addr, "name": reg.name, "error": "no response"}));
+                                }
+                            }
+                        }
+
+                        McpResponse::success(request.id, serde_json::json!({
+                            "content": [{ "type": "text", "text": format!("{} PLC ({}) slave {} - {} registers:\n{}", brand_name, models.first().map(|m| m.model).unwrap_or("?"), slave_id, results.len(), serde_json::to_string_pretty(&results).unwrap()) }]
+                        }))
+                    }
+                    "plc_write" => {
+                        let brand_name = arguments.get("brand").and_then(|v| v.as_str()).unwrap_or("Siemens");
+                        let slave_id = arguments.get("slave_id").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+                        let address = match arguments.get("address").and_then(|v| v.as_u64()) {
+                            Some(a) => a as u16,
+                            None => return McpResponse::error(request.id, -32602, "address is required".into()),
+                        };
+                        let value = match arguments.get("value") {
+                            Some(v) => v.as_f64().unwrap_or(0.0),
+                            None => return McpResponse::error(request.id, -32602, "value is required".into()),
+                        };
+
+                        let _brand = match brand_name {
+                            "Siemens" | "siemens" => crate::state::PlcBrand::Siemens,
+                            "Mitsubishi" | "mitsubishi" => crate::state::PlcBrand::Mitsubishi,
+                            "Delta" | "delta" => crate::state::PlcBrand::Delta,
+                            "Omron" | "omron" => crate::state::PlcBrand::Omron,
+                            _ => return McpResponse::error(request.id, -32602, format!("Unknown brand: {}", brand_name)),
+                        };
+
+                        let Some(ref mut port) = self.port else {
+                            return McpResponse::error(request.id, -1, "Not connected".into());
+                        };
+
+                        use serialrun_core::protocol::{ModbusFrame, ModbusParser};
+                        let raw_val = value as u16;
+                        let frame = ModbusParser::build_write_single(slave_id, address, raw_val);
+                        let req = frame.to_bytes();
+                        if let Err(e) = port.write(&req) {
+                            return McpResponse::error(request.id, -1, format!("Write failed: {}", e));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        let mut buf = [0u8; 256];
+                        match port.read(&mut buf) {
+                            Ok(n) if n >= 4 => {
+                                McpResponse::success(request.id, serde_json::json!({
+                                    "content": [{ "type": "text", "text": format!("Wrote {} to {} register 0x{:04X} (slave {})", value, brand_name, address, slave_id) }]
+                                }))
+                            }
+                            _ => McpResponse::error(request.id, -1, "No response".into())
                         }
                     }
                     _ => McpResponse::error(request.id, -32601, format!("Unknown tool: {}", tool_name))

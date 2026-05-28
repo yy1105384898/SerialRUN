@@ -8,7 +8,7 @@ build:
 release:
 	@mkdir -p target/release/SerialRUN.app/Contents/Resources
 	@python3 scripts/gen_icon.py target/release/SerialRUN.app/Contents/Resources/icon.icns
-	cargo build --release
+	cargo build --release -p serialrun-gui
 	@if [ -d target/release/SerialRUN.app ]; then \
 		echo "Syncing .app bundle..."; \
 		cp target/release/serialrun target/release/SerialRUN.app/Contents/MacOS/serialrun; \
@@ -27,6 +27,7 @@ app:
 	@echo "Step 3: Create .app bundle..."
 	@cp target/release/serialrun target/release/SerialRUN.app/Contents/MacOS/serialrun
 	@cp crates/serialrun-gui/Info.plist target/release/SerialRUN.app/Contents/Info.plist
+	@rm -rf target/release/SerialRUN.app/Contents/Resources/docs
 	@cp -r docs target/release/SerialRUN.app/Contents/Resources/docs
 	@codesign --force --deep --sign - target/release/SerialRUN.app 2>/dev/null
 	@echo ""

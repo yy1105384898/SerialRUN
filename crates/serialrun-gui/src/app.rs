@@ -86,6 +86,8 @@ impl eframe::App for SerialRunApp {
         toggle_window!(state.show_help, T::help(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::help::render_help_panel(ui, s), 600.0, 500.0);
         toggle_window!(state.show_modbus_window, T::modbus_panel(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::modbus::render_modbus_panel(ui, s), 520.0, 450.0);
         toggle_window!(state.show_plc_window, T::plc_control(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::plc::render_plc_panel(ui, s), 600.0, 500.0);
+        toggle_window!(state.show_bridge_window, T::bridge(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::bridge::render_bridge_panel(ui, s), 520.0, 450.0);
+        toggle_window!(state.show_simulator_window, T::simulator(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::simulator::render_simulator_panel(ui, s), 520.0, 500.0);
         toggle_window!(state.show_checksum_window, T::checksum(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::checksum::render_checksum_panel(ui, s), 400.0, 350.0);
         toggle_window!(state.show_file_transfer_window, T::file_transfer(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::file_transfer::render_file_transfer_panel(ui, s), 420.0, 300.0);
         toggle_window!(state.show_frame_builder_window, T::frame_builder(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::frame_builder::render_frame_builder_panel(ui, s), 450.0, 350.0);

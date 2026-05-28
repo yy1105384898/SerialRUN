@@ -88,7 +88,7 @@ serialrun-gui
 
 ### Interface Overview
 
-- **Top bar**: Tool buttons (Log, Chart, PLC, Modbus, File Transfer, Frame Builder, Data Logger, CAN, I2C/SPI, Oscilloscope, Flasher, Register Editor, Plugins), Theme/Language/Help
+- **Top bar**: Tool buttons (Log, Chart, PLC, Modbus, Bridge, Simulator, File Transfer, Frame Builder, Data Logger, CAN, I2C/SPI, Oscilloscope, Flasher, Register Editor, Plugins), Theme/Language/Help
 - **Left panel**: Port selector, baud rate, Auto-detect, Connect/Disconnect
 - **Center**: Terminal display with TX/RX/SYS indicators
 - **Bottom**: Status bar with connection state and byte counts
@@ -100,6 +100,8 @@ serialrun-gui
 | Terminal | Serial TX/RX with HEX mode, timestamps, CRC checksums |
 | Modbus | RTU monitor with function code parsing and register display |
 | PLC Control | Modbus register polling with brand presets (Siemens, Mitsubishi, Delta, etc.) |
+| TCP/RTU Bridge | Bridge Modbus TCP clients to serial RTU devices |
+| HMI Simulator | Virtual Modbus slave with configurable registers and coils |
 | CAN Bus | SLCAN frame capture, ID filtering, per-ID statistics |
 | I2C/SPI | Register read/write debug tool with address and data width config |
 | Oscilloscope | Real-time waveform display with trigger and cursor measurement |

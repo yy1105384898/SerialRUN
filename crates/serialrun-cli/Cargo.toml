@@ -6,7 +6,7 @@ description = "CLI for SerialRUN serial port assistant"
 license = "MIT"
 
 [[bin]]
-name = "serialrun"
+name = "serialrun-cli"
 path = "src/main.rs"
 
 [dependencies]

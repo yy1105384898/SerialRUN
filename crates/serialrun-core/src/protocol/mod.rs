@@ -3,11 +3,17 @@ pub mod custom;
 pub mod flasher;
 pub mod i2c_spi;
 pub mod modbus;
+pub mod modbus_bridge;
 pub mod modbus_master;
+pub mod modbus_simulator;
+pub mod modbus_tcp;
 pub mod serial_scope;
 
 pub use modbus::{ModbusFrame, ModbusFunction, ModbusParser};
+pub use modbus_tcp::ModbusTcpFrame;
 pub use modbus_master::{ModbusMaster, ModbusMasterError, ModbusMasterResult};
+pub use modbus_bridge::{BridgeConfig, BridgeLogEntry, start_bridge};
+pub use modbus_simulator::{SimulatorConfig, SimulatorMode, SimulatorLogEntry, SimulatorState, start_simulator, update_holding_register, update_coil};
 pub use custom::{ProtocolFrame, ProtocolParser};
 pub use can::{CanAnalyzer, CanFrame, CanFilter, CanIdStats};
 pub use i2c_spi::{I2cResult, SpiResult, I2cScanEntry};
