@@ -1,7 +1,7 @@
 use crate::state::{AppState, LogLevel, T};
 use eframe::egui;
 
-pub fn render_log_panel(ui: &mut egui::Ui, state: &AppState) {
+pub fn render_log_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
     ui.horizontal(|ui| {
         ui.label(T::log_viewer(lang));
@@ -47,12 +47,29 @@ pub fn render_log_panel(ui: &mut egui::Ui, state: &AppState) {
 
     ui.horizontal(|ui| {
         if ui.button(T::clear_logs(lang)).clicked() {
-            // Note: This requires mutable access to state
-            // In a real implementation, use a message passing system
+            state.log_entries.clear();
         }
 
         if ui.button(T::export_logs(lang)).clicked() {
-            // Export logs to file
+            if let Some(path) = rfd::FileDialog::new().add_filter("CSV", &["csv"]).save_file() {
+                let mut content = String::from("timestamp,level,message\n");
+                for entry in &state.log_entries {
+                    let ts = chrono::DateTime::from_timestamp_millis(entry.timestamp)
+                        .map(|t| t.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
+                        .unwrap_or_default();
+                    let level = match entry.level {
+                        LogLevel::Info => "INFO",
+                        LogLevel::Warning => "WARN",
+                        LogLevel::Error => "ERROR",
+                    };
+                    content.push_str(&format!("{},{},\"{}\"\n", ts, level, entry.message.replace('"', "\"\"")));
+                }
+                if let Err(e) = std::fs::write(&path, content) {
+                    state.add_log_entry(LogLevel::Error, &format!("Export failed: {}", e));
+                } else {
+                    state.add_log_entry(LogLevel::Info, &format!("Logs exported to {}", path.display()));
+                }
+            }
         }
     });
 }

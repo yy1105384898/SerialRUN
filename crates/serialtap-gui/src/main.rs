@@ -2,6 +2,7 @@
 
 mod app;
 mod icon;
+mod plc_presets;
 mod state;
 mod ui;
 

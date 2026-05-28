@@ -12,3 +12,4 @@ crate-type = ["cdylib"]
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+serialtap-plugin-api = { path = "../../crates/serialtap-plugin-api" }

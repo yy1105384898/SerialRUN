@@ -1,32 +1,9 @@
-use serde::{Deserialize, Serialize};
+use serialtap_plugin_api::PluginInfo as ApiPluginInfo;
 use std::ffi::{c_char, CStr, CString};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginInfo {
-    pub name: String,
-    pub version: String,
-    pub description: String,
-    pub author: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginCommand {
-    pub name: String,
-    pub description: String,
-    pub parameters: Vec<PluginParameter>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginParameter {
-    pub name: String,
-    pub description: String,
-    pub required: bool,
-    pub param_type: String,
-}
 
 #[no_mangle]
 pub extern "C" fn plugin_get_info() -> *mut c_char {
-    let info = PluginInfo {
+    let info = ApiPluginInfo {
         name: "Example Plugin".to_string(),
         version: "0.1.0".to_string(),
         description: "An example plugin for SerialTap".to_string(),
@@ -40,20 +17,38 @@ pub extern "C" fn plugin_get_info() -> *mut c_char {
 #[no_mangle]
 pub extern "C" fn plugin_get_commands() -> *mut c_char {
     let commands = vec![
-        PluginCommand {
+        serialtap_plugin_api::PluginCommand {
             name: "echo".to_string(),
             description: "Echo back the input data".to_string(),
-            parameters: vec![PluginParameter {
+            parameters: vec![serialtap_plugin_api::PluginParameter {
                 name: "data".to_string(),
                 description: "Data to echo".to_string(),
                 required: true,
                 param_type: "string".to_string(),
             }],
         },
-        PluginCommand {
+        serialtap_plugin_api::PluginCommand {
             name: "timestamp".to_string(),
             description: "Get current timestamp".to_string(),
             parameters: vec![],
+        },
+        serialtap_plugin_api::PluginCommand {
+            name: "add".to_string(),
+            description: "Add two numbers".to_string(),
+            parameters: vec![
+                serialtap_plugin_api::PluginParameter {
+                    name: "a".to_string(),
+                    description: "First number".to_string(),
+                    required: true,
+                    param_type: "number".to_string(),
+                },
+                serialtap_plugin_api::PluginParameter {
+                    name: "b".to_string(),
+                    description: "Second number".to_string(),
+                    required: true,
+                    param_type: "number".to_string(),
+                },
+            ],
         },
     ];
 
@@ -65,7 +60,7 @@ pub extern "C" fn plugin_get_commands() -> *mut c_char {
 pub extern "C" fn plugin_execute(command: *const c_char, params: *const c_char) -> *mut c_char {
     let command = unsafe {
         if command.is_null() {
-            return CString::new("{\"error\": \"Null command\"}").unwrap().into_raw();
+            return CString::new(r#"{"success":false,"error":"Null command"}"#).unwrap().into_raw();
         }
         CStr::from_ptr(command).to_string_lossy().to_string()
     };
@@ -82,27 +77,27 @@ pub extern "C" fn plugin_execute(command: *const c_char, params: *const c_char) 
         "echo" => {
             let parsed: serde_json::Value = serde_json::from_str(&params).unwrap_or_default();
             let data = parsed["data"].as_str().unwrap_or("No data");
-            serde_json::json!({
-                "success": true,
-                "result": data
-            })
+            serialtap_plugin_api::PluginResult::success(serde_json::json!(data))
         }
         "timestamp" => {
             let now = chrono::Utc::now();
-            serde_json::json!({
-                "success": true,
+            serialtap_plugin_api::PluginResult::success(serde_json::json!({
                 "timestamp": now.to_rfc3339()
-            })
+            }))
+        }
+        "add" => {
+            let parsed: serde_json::Value = serde_json::from_str(&params).unwrap_or_default();
+            let a = parsed["a"].as_f64().unwrap_or(0.0);
+            let b = parsed["b"].as_f64().unwrap_or(0.0);
+            serialtap_plugin_api::PluginResult::success(serde_json::json!(a + b))
         }
         _ => {
-            serde_json::json!({
-                "success": false,
-                "error": format!("Unknown command: {}", command)
-            })
+            serialtap_plugin_api::PluginResult::error(format!("Unknown command: {}", command))
         }
     };
 
-    CString::new(result.to_string()).unwrap().into_raw()
+    let json = serde_json::to_string(&result).unwrap();
+    CString::new(json).unwrap().into_raw()
 }
 
 #[no_mangle]
@@ -124,7 +119,7 @@ mod tests {
         assert!(!ptr.is_null());
 
         let info_str = unsafe { CStr::from_ptr(ptr).to_string_lossy() };
-        let info: PluginInfo = serde_json::from_str(&info_str).unwrap();
+        let info: ApiPluginInfo = serde_json::from_str(&info_str).unwrap();
 
         assert_eq!(info.name, "Example Plugin");
         assert_eq!(info.version, "0.1.0");
@@ -138,10 +133,12 @@ mod tests {
         assert!(!ptr.is_null());
 
         let commands_str = unsafe { CStr::from_ptr(ptr).to_string_lossy() };
-        let commands: Vec<PluginCommand> = serde_json::from_str(&commands_str).unwrap();
+        let commands: Vec<serialtap_plugin_api::PluginCommand> =
+            serde_json::from_str(&commands_str).unwrap();
 
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 3);
         assert_eq!(commands[0].name, "echo");
+        assert_eq!(commands[2].name, "add");
 
         plugin_free_string(ptr);
     }
@@ -155,10 +152,29 @@ mod tests {
         assert!(!ptr.is_null());
 
         let result_str = unsafe { CStr::from_ptr(ptr).to_string_lossy() };
-        let result: serde_json::Value = serde_json::from_str(&result_str).unwrap();
+        let result: serialtap_plugin_api::PluginResult =
+            serde_json::from_str(&result_str).unwrap();
 
-        assert_eq!(result["success"], true);
-        assert_eq!(result["result"], "hello");
+        assert!(result.success);
+        assert_eq!(result.result.unwrap(), serde_json::json!("hello"));
+
+        plugin_free_string(ptr);
+    }
+
+    #[test]
+    fn test_plugin_execute_add() {
+        let command = CString::new("add").unwrap();
+        let params = CString::new(r#"{"a": 3.0, "b": 4.0}"#).unwrap();
+
+        let ptr = plugin_execute(command.as_ptr(), params.as_ptr());
+        assert!(!ptr.is_null());
+
+        let result_str = unsafe { CStr::from_ptr(ptr).to_string_lossy() };
+        let result: serialtap_plugin_api::PluginResult =
+            serde_json::from_str(&result_str).unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.result.unwrap(), serde_json::json!(7.0));
 
         plugin_free_string(ptr);
     }
@@ -172,9 +188,10 @@ mod tests {
         assert!(!ptr.is_null());
 
         let result_str = unsafe { CStr::from_ptr(ptr).to_string_lossy() };
-        let result: serde_json::Value = serde_json::from_str(&result_str).unwrap();
+        let result: serialtap_plugin_api::PluginResult =
+            serde_json::from_str(&result_str).unwrap();
 
-        assert_eq!(result["success"], false);
+        assert!(!result.success);
 
         plugin_free_string(ptr);
     }

@@ -18,6 +18,8 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 tracing = { workspace = true }
+serialtap-plugin-api = { path = "../serialtap-plugin-api" }
+libloading = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

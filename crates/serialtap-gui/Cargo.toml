@@ -6,18 +6,25 @@ description = "GUI for SerialTap serial port assistant"
 license = "MIT"
 
 [[bin]]
-name = "serialtap-gui"
+name = "serialtap"
 path = "src/main.rs"
 
 [dependencies]
 serialtap-core = { path = "../serialtap-core" }
+serialtap-plugin-api = { path = "../serialtap-plugin-api" }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui_extras = { workspace = true }
 tokio = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 rfd = { workspace = true }
+arboard = { workspace = true }
+png = { workspace = true }
 chrono = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
