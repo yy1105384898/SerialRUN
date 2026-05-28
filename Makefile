@@ -20,6 +20,7 @@ release:
 # Build macOS .app bundle with icon
 app:
 	@echo "Step 1: Generate icons from master image..."
+	@mkdir -p target/release/SerialRUN.app/Contents/MacOS
 	@mkdir -p target/release/SerialRUN.app/Contents/Resources
 	@python3 scripts/gen_icon.py target/release/SerialRUN.app/Contents/Resources/icon.icns
 	@echo "Step 2: Build binary (embeds icon)..."

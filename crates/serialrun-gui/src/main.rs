@@ -18,9 +18,12 @@ fn main() -> eframe::Result<()> {
         )
         .init();
 
-    // Start MCP server in background thread
-    std::thread::spawn(|| {
-        mcp_server::run_mcp_server();
+    // Start MCP manager (does not bind yet — waits for Start command)
+    let mcp_handle = mcp_server::McpHandle::start();
+    // Send initial start command
+    mcp_handle.send(mcp_server::McpCommand::Start {
+        bind_addr: "127.0.0.1".into(),
+        port: 9527,
     });
 
     let icon_data = icon::generate_icon().map(|d| std::sync::Arc::new(d));
@@ -43,7 +46,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             setup_custom_fonts(&cc.egui_ctx);
-            Ok(Box::new(app::SerialRunApp::new(cc)))
+            Ok(Box::new(app::SerialRunApp::new(cc, mcp_handle)))
         }),
     )
 }

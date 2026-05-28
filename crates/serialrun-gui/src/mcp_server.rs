@@ -1,7 +1,141 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
+
+// ── MCP Lifecycle ──
+
+pub enum McpCommand {
+    Start { bind_addr: String, port: u16 },
+    Stop,
+    Reconfigure { bind_addr: String, port: u16 },
+}
+
+pub enum McpStatus {
+    Running { addr: String },
+    Stopped,
+    Error(String),
+}
+
+/// Handle to control the MCP server from the GUI.
+pub struct McpHandle {
+    cmd_tx: mpsc::Sender<McpCommand>,
+    status_rx: mpsc::Receiver<McpStatus>,
+}
+
+impl McpHandle {
+    pub fn start() -> Self {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (status_tx, status_rx) = mpsc::channel();
+        std::thread::spawn(move || mcp_manager(cmd_rx, status_tx));
+        Self { cmd_tx, status_rx }
+    }
+
+    pub fn send(&self, cmd: McpCommand) {
+        let _ = self.cmd_tx.send(cmd);
+    }
+
+    pub fn poll_status(&self) -> Option<McpStatus> {
+        self.status_rx.try_recv().ok()
+    }
+
+    pub fn cmd_tx(&self) -> mpsc::Sender<McpCommand> {
+        self.cmd_tx.clone()
+    }
+}
+
+fn mcp_manager(cmd_rx: mpsc::Receiver<McpCommand>, status_tx: mpsc::Sender<McpStatus>) {
+    let mut running = false;
+    let mut stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut current_thread: Option<std::thread::JoinHandle<()>> = None;
+
+    loop {
+        match cmd_rx.recv() {
+            Ok(McpCommand::Start { bind_addr, port }) => {
+                if running { continue; }
+                stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let sf = stop_flag.clone();
+                let stx = status_tx.clone();
+                let handle = std::thread::spawn(move || {
+                    run_mcp_listener(&bind_addr, port, sf, stx);
+                });
+                current_thread = Some(handle);
+                running = true;
+            }
+            Ok(McpCommand::Stop) => {
+                if !running { continue; }
+                stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Some(h) = current_thread.take() { let _ = h.join(); }
+                running = false;
+                let _ = status_tx.send(McpStatus::Stopped);
+            }
+            Ok(McpCommand::Reconfigure { bind_addr, port }) => {
+                // Stop current
+                if running {
+                    stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    if let Some(h) = current_thread.take() { let _ = h.join(); }
+                    running = false;
+                    let _ = status_tx.send(McpStatus::Stopped);
+                }
+                // Start with new config
+                stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let sf = stop_flag.clone();
+                let stx = status_tx.clone();
+                let handle = std::thread::spawn(move || {
+                    run_mcp_listener(&bind_addr, port, sf, stx);
+                });
+                current_thread = Some(handle);
+                running = true;
+            }
+            Err(_) => break,
+        }
+    }
+
+    stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    if let Some(h) = current_thread.take() { let _ = h.join(); }
+}
+
+fn run_mcp_listener(bind_addr: &str, port: u16, stop_flag: Arc<std::sync::atomic::AtomicBool>, status_tx: mpsc::Sender<McpStatus>) {
+    let mcp = Arc::new(Mutex::new(SerialRunMcp::new()));
+
+    let addr = format!("{}:{}", bind_addr, port);
+    let listener = match TcpListener::bind(&addr) {
+        Ok(l) => l,
+        Err(e) => {
+            let _ = status_tx.send(McpStatus::Error(format!("Failed to bind: {}", e)));
+            return;
+        }
+    };
+    listener.set_nonblocking(true).ok();
+
+    let _ = status_tx.send(McpStatus::Running { addr: addr.clone() });
+    eprintln!("MCP server listening on {}", addr);
+
+    loop {
+        if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let mcp = mcp.clone();
+                std::thread::spawn(move || {
+                    handle_client(stream, mcp);
+                });
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                continue;
+            }
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                continue;
+            }
+        }
+    }
+
+    let _ = status_tx.send(McpStatus::Stopped);
+    eprintln!("MCP server stopped");
+}
 
 #[derive(Serialize, Deserialize)]
 struct McpRequest {
@@ -523,35 +657,6 @@ impl SerialRunMcp {
                 McpResponse::success(request.id, serde_json::json!({}))
             }
             _ => McpResponse::error(request.id, -32601, format!("Unknown method: {}", request.method))
-        }
-    }
-}
-
-pub fn run_mcp_server() {
-    let mcp = Arc::new(Mutex::new(SerialRunMcp::new()));
-
-    // Try to listen on port 9527
-    let listener = match TcpListener::bind("127.0.0.1:9527") {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("MCP server: Failed to bind to port 9527: {}", e);
-            return;
-        }
-    };
-
-    eprintln!("MCP server listening on 127.0.0.1:9527");
-
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                let mcp = mcp.clone();
-                std::thread::spawn(move || {
-                    handle_client(stream, mcp);
-                });
-            }
-            Err(e) => {
-                eprintln!("MCP server: Connection failed: {}", e);
-            }
         }
     }
 }

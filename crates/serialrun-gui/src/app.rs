@@ -6,10 +6,11 @@ use std::sync::{Arc, Mutex};
 pub struct SerialRunApp {
     state: Arc<Mutex<AppState>>,
     current_theme: Theme,
+    mcp_handle: crate::mcp_server::McpHandle,
 }
 
 impl SerialRunApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, mcp_handle: crate::mcp_server::McpHandle) -> Self {
         let mut state = AppState::new();
         state.language = Language::Chinese;
         state.theme = Theme::Dark;
@@ -20,13 +21,36 @@ impl SerialRunApp {
         visuals.widgets.hovered.rounding = egui::Rounding::same(6.0);
         visuals.widgets.active.rounding = egui::Rounding::same(6.0);
         cc.egui_ctx.set_visuals(visuals);
-        Self { state: Arc::new(Mutex::new(state)), current_theme: Theme::Dark }
+        Self { state: Arc::new(Mutex::new(state)), current_theme: Theme::Dark, mcp_handle }
     }
 }
 
 impl eframe::App for SerialRunApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Poll MCP status
+        while let Some(status) = self.mcp_handle.poll_status() {
+            match status {
+                crate::mcp_server::McpStatus::Running { addr } => {
+                    state.mcp_running = true;
+                    state.mcp_status = addr;
+                }
+                crate::mcp_server::McpStatus::Stopped => {
+                    state.mcp_running = false;
+                    state.mcp_status.clear();
+                }
+                crate::mcp_server::McpStatus::Error(e) => {
+                    state.mcp_running = false;
+                    state.mcp_status = format!("Error: {}", e);
+                }
+            }
+        }
+        // Pass command sender to state on first frame
+        if state.mcp_cmd_tx.is_none() {
+            state.mcp_cmd_tx = Some(self.mcp_handle.cmd_tx());
+        }
+
         let lang = state.language;
 
         if state.theme != self.current_theme {

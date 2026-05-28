@@ -2,6 +2,7 @@ use serialrun_core::config::SerialConfig;
 use serialrun_core::protocol::ModbusFunction;
 use serialrun_core::{SerialPort, SerialPortInfo};
 use std::collections::{HashMap, VecDeque};
+use std::sync::mpsc;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Language {
@@ -480,6 +481,17 @@ impl T {
     pub fn coils(l: Language) -> &'static str { match l { Language::English => "Coils", Language::Chinese => "线圈" } }
     pub fn set_value(l: Language) -> &'static str { match l { Language::English => "Set", Language::Chinese => "设置" } }
     pub fn sim_log(l: Language) -> &'static str { match l { Language::English => "Simulator Log", Language::Chinese => "模拟器日志" } }
+    // MCP
+    pub fn mcp_server(l: Language) -> &'static str { match l { Language::English => "MCP Server", Language::Chinese => "MCP 服务器" } }
+    pub fn mcp_port(l: Language) -> &'static str { match l { Language::English => "Port", Language::Chinese => "端口" } }
+    pub fn mcp_bind(l: Language) -> &'static str { match l { Language::English => "Bind Address", Language::Chinese => "绑定地址" } }
+    pub fn mcp_localhost(l: Language) -> &'static str { match l { Language::English => "Localhost only", Language::Chinese => "仅本机" } }
+    pub fn mcp_lan(l: Language) -> &'static str { match l { Language::English => "All interfaces (LAN)", Language::Chinese => "所有接口（局域网）" } }
+    pub fn mcp_enable(l: Language) -> &'static str { match l { Language::English => "Enable MCP Server", Language::Chinese => "启用 MCP 服务器" } }
+    pub fn mcp_status(l: Language) -> &'static str { match l { Language::English => "Status", Language::Chinese => "状态" } }
+    pub fn mcp_running(l: Language) -> &'static str { match l { Language::English => "Running", Language::Chinese => "运行中" } }
+    pub fn mcp_stopped(l: Language) -> &'static str { match l { Language::English => "Stopped", Language::Chinese => "已停止" } }
+    pub fn mcp_warning(l: Language) -> &'static str { match l { Language::English => "LAN mode: anyone on the network can control serial ports. Use with caution.", Language::Chinese => "局域网模式：网络中任何人都可以控制串口端口，请谨慎使用。" } }
 }
 
 // ── Modbus types ──
@@ -763,6 +775,13 @@ pub struct AppState {
     pub sim_log_rx: Option<std::sync::mpsc::Receiver<serialrun_core::protocol::SimulatorLogEntry>>,
     pub sim_err_rx: Option<std::sync::mpsc::Receiver<String>>,
     pub sim_registers: Option<std::sync::Arc<std::sync::Mutex<serialrun_core::protocol::SimulatorState>>>,
+    // MCP server config
+    pub mcp_enabled: bool,
+    pub mcp_port: u16,
+    pub mcp_bind_lan: bool,
+    pub mcp_running: bool,
+    pub mcp_status: String,
+    pub mcp_cmd_tx: Option<mpsc::Sender<crate::mcp_server::McpCommand>>,
 }
 
 #[derive(Clone)]
@@ -928,6 +947,8 @@ impl AppState {
             },
             bridge_stop: None, bridge_log_rx: None, bridge_err_rx: None,
             sim_stop: None, sim_log_rx: None, sim_err_rx: None, sim_registers: None,
+            mcp_enabled: true, mcp_port: 9527, mcp_bind_lan: false, mcp_running: false, mcp_status: String::new(),
+            mcp_cmd_tx: None,
         }
     }
 

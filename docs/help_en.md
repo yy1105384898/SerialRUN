@@ -272,5 +272,11 @@ A: Check slave address, verify function code and address range, validate CRC che
 **Q: PLC register shows ERR?**
 A: The register read failed. Check wiring, slave ID, and ensure the register address exists on the PLC.
 
+**Q: How to use MCP server?**
+A: The MCP server is enabled by default on port 9527 (localhost). Configure in Settings > MCP Server:
+- Change port number if 9527 is occupied
+- Enable "All interfaces (LAN)" to allow remote AI assistants to connect
+- AI assistants can control serial ports via MCP protocol (see Help > MCP Guide)
+
 **Q: File transfer fails?**
 A: Ensure both sides use the same protocol, check serial connection stability, try lowering the baud rate.
