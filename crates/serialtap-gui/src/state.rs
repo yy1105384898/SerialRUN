@@ -682,6 +682,18 @@ pub struct AppState {
     pub i2c_async_receiver: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     pub flasher_async_receiver: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     pub terminal_async_receiver: Option<std::sync::mpsc::Receiver<Result<Vec<u8>, String>>>,
+    // Async write operations
+    pub can_tx_async: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    pub plc_write_async: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    pub modbus_monitor_async: Option<std::sync::mpsc::Receiver<Result<Vec<u8>, String>>>,
+    pub auto_reply_async: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    pub fb_write_async: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    // Persistent readers (continuous capture)
+    pub can_reader: Option<crate::async_utils::PersistentReader<Vec<CanFrameData>>>,
+    pub scope_reader: Option<crate::async_utils::PersistentReader<Vec<ScopeDataPoint>>>,
+    // File transfer async
+    pub file_transfer_thread: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    pub file_transfer_progress_rx: Option<std::sync::mpsc::Receiver<(u64, u64)>>,
 }
 
 #[derive(Clone)]
@@ -824,6 +836,15 @@ impl AppState {
             i2c_async_receiver: None,
             flasher_async_receiver: None,
             terminal_async_receiver: None,
+            can_tx_async: None,
+            plc_write_async: None,
+            modbus_monitor_async: None,
+            auto_reply_async: None,
+            fb_write_async: None,
+            can_reader: None,
+            scope_reader: None,
+            file_transfer_thread: None,
+            file_transfer_progress_rx: None,
         }
     }
 

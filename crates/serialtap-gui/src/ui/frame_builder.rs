@@ -4,6 +4,17 @@ use serialtap_core::protocol::ModbusParser;
 
 pub fn render_frame_builder_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
+
+    // Poll async write result
+    if let Some(ref rx) = state.fb_write_async {
+        if let Ok(result) = rx.try_recv() {
+            state.fb_write_async = None;
+            if let Err(e) = result {
+                state.add_log_entry(crate::state::LogLevel::Error, &format!("Frame send error: {}", e));
+            }
+        }
+    }
+
     egui::Grid::new("fb_grid").num_columns(2).show(ui, |ui| {
         ui.label(T::slave_id(lang)); ui.add(egui::DragValue::new(&mut state.frame_builder_slave_id).range(0..=247)); ui.end_row();
         ui.label(T::function_code(lang));
@@ -29,9 +40,11 @@ pub fn render_frame_builder_panel(ui: &mut egui::Ui, state: &mut AppState) {
             };
             state.frame_builder_hex = frame.to_bytes().iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
         }
-        if ui.button("Send").clicked() && !state.frame_builder_hex.is_empty() && state.is_connected {
+        if ui.button("Send").clicked() && !state.frame_builder_hex.is_empty() && state.is_connected && state.fb_write_async.is_none() {
             if let Some(bytes) = parse_hex(&state.frame_builder_hex) {
-                if let Some(ref mut port) = state.port { let _ = port.write(&bytes); }
+                let port_name = state.selected_port.clone().unwrap_or_default();
+                let baud_rate = state.config.baud_rate;
+                state.fb_write_async = Some(crate::async_utils::spawn_serial_write(port_name, baud_rate, bytes));
             }
         }
     });

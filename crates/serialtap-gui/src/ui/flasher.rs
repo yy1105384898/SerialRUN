@@ -219,22 +219,24 @@ fn flasher_flash(state: &mut AppState) {
         return;
     }
 
-    let path = match std::fs::read(&state.flasher_file) {
-        Ok(data) => data,
-        Err(e) => {
-            flasher_log(state, &format!("Read error: {}", e));
-            return;
-        }
-    };
-
+    let firmware_path = state.flasher_file.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     let port_name = state.selected_port.clone().unwrap_or_default();
     let baud_rate = state.config.baud_rate;
     state.flasher_async_receiver = Some(rx);
     state.flasher_progress = 0.0;
-    flasher_log(state, &format!("Flashing {} byte(s)...", path.len()));
+    flasher_log(state, &format!("Reading firmware from {}...", firmware_path));
 
     std::thread::spawn(move || {
+        // Read file in background thread
+        let path = match std::fs::read(&firmware_path) {
+            Ok(data) => data,
+            Err(e) => {
+                let _ = tx.send(Err(format!("Read error: {}", e)));
+                return;
+            }
+        };
+
         let config = serialtap_core::config::SerialConfig {
             port_name,
             baud_rate,
@@ -260,6 +262,6 @@ fn flasher_flash(state: &mut AppState) {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let _ = port.disconnect();
-        let _ = tx.send(Ok("Flash complete!".into()));
+        let _ = tx.send(Ok(format!("Flash complete! {} bytes written.", total)));
     });
 }

@@ -55,6 +55,16 @@ pub fn render_plc_panel(ui: &mut egui::Ui, state: &mut AppState) {
         }
     }
 
+    // Poll async write result
+    if let Some(ref rx) = state.plc_write_async {
+        if let Ok(result) = rx.try_recv() {
+            state.plc_write_async = None;
+            if let Err(e) = result {
+                plc_log(state, &format!("Write error: {}", e));
+            }
+        }
+    }
+
     // ── Section 1: Connection & Device ──
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("PLC Control").strong().size(14.0));
@@ -311,14 +321,20 @@ fn do_read_all(state: &mut AppState) {
 }
 
 fn do_write_register(state: &mut AppState) {
+    if state.plc_write_async.is_some() { return; }
     let Some(idx) = state.plc.selected_register else { return };
     let regs = get_register_defs(state);
     let Some(reg) = regs.get(idx) else { return };
 
-    match reg.data_type {
+    let frame_bytes = match reg.data_type {
         PlcDataType::Bool => {
             let on = state.plc.write_value.trim() == "1" || state.plc.write_value.trim().eq_ignore_ascii_case("on") || state.plc.write_value.trim().eq_ignore_ascii_case("true");
-            write_coil(state, reg, on);
+            let data = if on {
+                vec![(reg.addr >> 8) as u8, reg.addr as u8, 0xFF, 0x00]
+            } else {
+                vec![(reg.addr >> 8) as u8, reg.addr as u8, 0x00, 0x00]
+            };
+            ModbusFrame::new(state.plc.slave_id, serialtap_core::protocol::ModbusFunction::WriteSingleCoil, data).to_bytes()
         }
         PlcDataType::U16 | PlcDataType::I16 => {
             let val: u16 = match state.plc.write_value.trim().parse() {
@@ -326,11 +342,7 @@ fn do_write_register(state: &mut AppState) {
                 Err(_) => { plc_log(state, &format!("Invalid value for {}", reg.name)); return; }
             };
             let data = vec![(reg.addr >> 8) as u8, reg.addr as u8, (val >> 8) as u8, val as u8];
-            let frame = ModbusFrame::new(state.plc.slave_id, serialtap_core::protocol::ModbusFunction::WriteSingleRegister, data);
-            if let Some(ref mut port) = state.port {
-                let _ = port.write(&frame.to_bytes());
-                plc_log(state, &format!("Wrote {} = {} to 0x{:04X}", reg.name, val, reg.addr));
-            }
+            ModbusFrame::new(state.plc.slave_id, serialtap_core::protocol::ModbusFunction::WriteSingleRegister, data).to_bytes()
         }
         PlcDataType::U32 => {
             let val: u32 = match state.plc.write_value.trim().parse() {
@@ -344,11 +356,7 @@ fn do_write_register(state: &mut AppState) {
                 ((reg.addr + 1) >> 8) as u8, (reg.addr + 1) as u8,
                 bytes[2], bytes[3],
             ];
-            let frame = ModbusFrame::new(state.plc.slave_id, serialtap_core::protocol::ModbusFunction::WriteMultipleRegisters, data);
-            if let Some(ref mut port) = state.port {
-                let _ = port.write(&frame.to_bytes());
-                plc_log(state, &format!("Wrote {} = {} to 0x{:04X}", reg.name, val, reg.addr));
-            }
+            ModbusFrame::new(state.plc.slave_id, serialtap_core::protocol::ModbusFunction::WriteMultipleRegisters, data).to_bytes()
         }
         PlcDataType::Float32 => {
             let val: f32 = match state.plc.write_value.trim().parse() {
@@ -363,24 +371,26 @@ fn do_write_register(state: &mut AppState) {
                 ((reg.addr + 1) >> 8) as u8, (reg.addr + 1) as u8,
                 bytes[2], bytes[3],
             ];
-            let frame = ModbusFrame::new(state.plc.slave_id, serialtap_core::protocol::ModbusFunction::WriteMultipleRegisters, data);
-            if let Some(ref mut port) = state.port {
-                let _ = port.write(&frame.to_bytes());
-                plc_log(state, &format!("Wrote {} = {} to 0x{:04X}", reg.name, val, reg.addr));
-            }
+            ModbusFrame::new(state.plc.slave_id, serialtap_core::protocol::ModbusFunction::WriteMultipleRegisters, data).to_bytes()
         }
-    }
+    };
+
+    let port_name = state.selected_port.clone().unwrap_or_default();
+    let baud_rate = state.config.baud_rate;
+    state.plc_write_async = Some(crate::async_utils::spawn_serial_write(port_name, baud_rate, frame_bytes));
+    plc_log(state, &format!("Writing to {} (0x{:04X})...", reg.name, reg.addr));
 }
 
 fn write_coil(state: &mut AppState, reg: &PlcRegisterDef, on: bool) {
+    if state.plc_write_async.is_some() { return; }
     let data = if on {
         vec![(reg.addr >> 8) as u8, reg.addr as u8, 0xFF, 0x00]
     } else {
         vec![(reg.addr >> 8) as u8, reg.addr as u8, 0x00, 0x00]
     };
     let frame = ModbusFrame::new(state.plc.slave_id, serialtap_core::protocol::ModbusFunction::WriteSingleCoil, data);
-    if let Some(ref mut port) = state.port {
-        let _ = port.write(&frame.to_bytes());
-        plc_log(state, &format!("Coil {} => {}", reg.name, if on { "ON" } else { "OFF" }));
-    }
+    let port_name = state.selected_port.clone().unwrap_or_default();
+    let baud_rate = state.config.baud_rate;
+    state.plc_write_async = Some(crate::async_utils::spawn_serial_write(port_name, baud_rate, frame.to_bytes()));
+    plc_log(state, &format!("Coil {} => {}", reg.name, if on { "ON" } else { "OFF" }));
 }

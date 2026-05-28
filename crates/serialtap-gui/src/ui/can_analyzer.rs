@@ -1,9 +1,30 @@
 use crate::state::{AppState, CanFrameData, T};
+use crate::async_utils::PersistentReader;
 use eframe::egui;
 use std::collections::HashMap;
 
 pub fn render_can_analyzer_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
+
+    // Poll CAN TX result
+    if let Some(ref rx) = state.can_tx_async {
+        if let Ok(result) = rx.try_recv() {
+            state.can_tx_async = None;
+            if let Err(e) = result {
+                state.add_log_entry(crate::state::LogLevel::Error, &format!("CAN TX error: {}", e));
+            }
+        }
+    }
+
+    // Poll persistent reader
+    if let Some(ref reader) = state.can_reader {
+        while let Some(frames) = reader.poll() {
+            state.can_frames.extend(frames);
+            if state.can_frames.len() > 2000 {
+                state.can_frames.drain(..state.can_frames.len() - 2000);
+            }
+        }
+    }
 
     // ── Header ──
     ui.horizontal(|ui| {
@@ -15,6 +36,11 @@ pub fn render_can_analyzer_panel(ui: &mut egui::Ui, state: &mut AppState) {
             if state.can_capturing {
                 state.can_frames.clear();
                 state.can_stats = crate::state::CanStats::default();
+                // Start persistent reader
+                start_can_reader(state);
+            } else {
+                // Stop persistent reader
+                stop_can_reader(state);
             }
         }
         if ui.button(T::clear(lang)).clicked() {
@@ -71,10 +97,52 @@ pub fn render_can_analyzer_panel(ui: &mut egui::Ui, state: &mut AppState) {
     } else {
         render_frame_list(ui, state);
     }
+}
 
-    // ── Capture ──
-    if state.can_capturing && state.is_connected {
-        read_and_parse_can(state);
+fn start_can_reader(state: &mut AppState) {
+    if state.can_reader.is_some() { return; }
+    let port_name = state.selected_port.clone().unwrap_or_default();
+    let baud_rate = state.config.baud_rate;
+    let reader = PersistentReader::start(move |stop, tx| {
+        let config = serialtap_core::config::SerialConfig {
+            port_name,
+            baud_rate,
+            ..Default::default()
+        };
+        let mut port = serialtap_core::SerialPort::new(config);
+        if port.connect().is_err() { return; }
+        let mut line_buf = String::new();
+        let mut buf = [0u8; 1024];
+        while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            match port.read(&mut buf) {
+                Ok(n) if n > 0 => {
+                    let text = String::from_utf8_lossy(&buf[..n]);
+                    line_buf.push_str(&text);
+                    let mut frames = Vec::new();
+                    while let Some(pos) = line_buf.find('\r') {
+                        let line = line_buf[..pos].to_string();
+                        line_buf = line_buf[pos + 1..].to_string();
+                        if let Some(frame) = parse_slcan_line(&line) {
+                            frames.push(frame);
+                        }
+                    }
+                    if !frames.is_empty() {
+                        let _ = tx.send(frames);
+                    }
+                }
+                _ => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+        }
+        let _ = port.disconnect();
+    });
+    state.can_reader = Some(reader);
+}
+
+fn stop_can_reader(state: &mut AppState) {
+    if let Some(mut reader) = state.can_reader.take() {
+        reader.stop();
     }
 }
 
@@ -96,9 +164,7 @@ fn render_frame_list(ui: &mut egui::Ui, state: &mut AppState) {
             prev_ts = Some(frame.timestamp);
 
             ui.horizontal(|ui| {
-                // Timestamp
                 ui.label(egui::RichText::new(format!("[{}]", ts)).weak().monospace().small());
-                // Delta
                 if let Some(d) = delta {
                     let delta_color = if d < 10 { egui::Color32::from_rgb(0, 180, 0) }
                         else if d < 100 { egui::Color32::from_rgb(180, 180, 0) }
@@ -107,19 +173,14 @@ fn render_frame_list(ui: &mut egui::Ui, state: &mut AppState) {
                 } else {
                     ui.label(egui::RichText::new("      ").monospace().small());
                 }
-                // Direction
                 let dir = if frame.is_error { "ERR" } else { "RX " };
                 let dir_color = if frame.is_error { egui::Color32::RED } else { egui::Color32::LIGHT_GREEN };
                 ui.label(egui::RichText::new(dir).color(dir_color).monospace().small());
-                // ID
                 ui.label(egui::RichText::new(&id_str).color(id_color).monospace().small().strong());
-                // IDE
                 let ext_text = if frame.is_ext { "EXT" } else { "   " };
                 let ext_color = if frame.is_ext { egui::Color32::from_rgb(150, 150, 255) } else { egui::Color32::TRANSPARENT };
                 ui.label(egui::RichText::new(ext_text).color(ext_color).monospace().small());
-                // DLC
                 ui.label(egui::RichText::new(format!("DLC={}", frame.dlc)).monospace().small());
-                // Data
                 ui.label(egui::RichText::new(&data_str).monospace().small());
             });
         }
@@ -186,11 +247,10 @@ fn compute_stats(frames: &[CanFrameData]) -> CanStats {
         ids.insert(f.id);
         if f.id > max_id { max_id = f.id; }
     }
-    // Rough bus load: each standard CAN frame ~128 bits at 500kbps ≈ 256µs
     let time_span = if frames.len() >= 2 {
         (frames.last().unwrap().timestamp - frames.first().unwrap().timestamp) as f64
     } else { 0.0 };
-    let bits_per_frame = 47 + 20 + frames.iter().map(|f| 8 * f.dlc as u64).sum::<u64>(); // SOF+ID+DLC+data+CRC+EOF
+    let bits_per_frame = 47 + 20 + frames.iter().map(|f| 8 * f.dlc as u64).sum::<u64>();
     let total_bits = bits_per_frame * frames.len() as u64;
     let bus_load = if time_span > 0.0 {
         (total_bits as f64 / 500_000.0) / (time_span / 1000.0) * 100.0
@@ -224,12 +284,10 @@ fn compute_per_id_stats(frames: &[CanFrameData]) -> Vec<(u32, PerIdStat)> {
 }
 
 fn get_id_color(id: u32) -> egui::Color32 {
-    // Consistent color per ID
-    let hash = id.wrapping_mul(2654435761); // Fibonacci hashing
+    let hash = id.wrapping_mul(2654435761);
     let r = ((hash >> 0) & 0xFF) as u8;
     let g = ((hash >> 8) & 0xFF) as u8;
     let b = ((hash >> 16) & 0xFF) as u8;
-    // Keep colors visible on dark background
     let r = (r as u16 * 170 / 255 + 80) as u8;
     let g = (g as u16 * 170 / 255 + 80) as u8;
     let b = (b as u16 * 170 / 255 + 80) as u8;
@@ -249,26 +307,22 @@ fn can_transmit(state: &mut AppState) {
         state.add_log_entry(crate::state::LogLevel::Error, "CAN TX: data too long (max 8 bytes)");
         return;
     }
-    // Format as SLCAN transmit command
     let is_ext = id > 0x7FF;
     let cmd = if is_ext {
         format!("T{:08X}{}\r", id, data.iter().map(|b| format!("{:02X}", b)).collect::<String>())
     } else {
         format!("t{:03X}{}\r", id, data.iter().map(|b| format!("{:02X}", b)).collect::<String>())
     };
-    if let Some(ref mut port) = state.port {
-        match port.write(cmd.as_bytes()) {
-            Ok(_) => {
-                // Log as TX
-                state.can_frames.push(CanFrameData {
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                    id, is_ext, dlc: data.len() as u8, data, is_error: false,
-                });
-                state.add_log_entry(crate::state::LogLevel::Info, &format!("CAN TX: ID={:X} Data={}", id, state.can_tx_data));
-            }
-            Err(e) => { state.add_log_entry(crate::state::LogLevel::Error, &format!("CAN TX error: {}", e)); }
-        }
-    }
+    let port_name = state.selected_port.clone().unwrap_or_default();
+    let baud_rate = state.config.baud_rate;
+    let tx_data = cmd.into_bytes();
+    state.can_tx_async = Some(crate::async_utils::spawn_serial_write(port_name, baud_rate, tx_data));
+    // Log as TX immediately (optimistic)
+    state.can_frames.push(CanFrameData {
+        timestamp: chrono::Utc::now().timestamp_millis(),
+        id, is_ext, dlc: data.len() as u8, data, is_error: false,
+    });
+    state.add_log_entry(crate::state::LogLevel::Info, &format!("CAN TX: ID={:X} Data={}", id, state.can_tx_data));
 }
 
 fn export_can_frames(state: &mut AppState) {
@@ -287,23 +341,6 @@ fn export_can_frames(state: &mut AppState) {
             state.add_log_entry(crate::state::LogLevel::Error, &format!("Export failed: {}", e));
         } else {
             state.add_log_entry(crate::state::LogLevel::Info, &format!("Exported {} frames to {}", state.can_frames.len(), path.display()));
-        }
-    }
-}
-
-fn read_and_parse_can(state: &mut AppState) {
-    let mut buf = [0u8; 1024];
-    if let Some(ref mut port) = state.port {
-        if let Ok(n) = port.read(&mut buf) {
-            if n > 0 {
-                let text = String::from_utf8_lossy(&buf[..n]);
-                for line in text.lines() {
-                    if let Some(frame) = parse_slcan_line(line) {
-                        state.can_frames.push(frame);
-                        if state.can_frames.len() > 2000 { state.can_frames.remove(0); }
-                    }
-                }
-            }
         }
     }
 }

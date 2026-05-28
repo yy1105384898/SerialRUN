@@ -131,12 +131,35 @@ fn render_register_monitor(ui: &mut egui::Ui, state: &mut AppState) {
         ui.label(T::poll_interval(lang)); ui.add(egui::DragValue::new(&mut state.modbus.monitor_interval_ms).range(100..=10000)); ui.end_row();
     });
     ui.add_space(4.0);
+
+    // Poll async monitor result
+    if let Some(ref rx) = state.modbus_monitor_async {
+        if let Ok(result) = rx.try_recv() {
+            state.modbus_monitor_async = None;
+            if let Ok(resp) = result {
+                if let Ok(f) = ModbusFrame::parse(&resp) {
+                    let data = &f.data;
+                    let addr: u16 = state.modbus.monitor_start_addr.parse().unwrap_or(0);
+                    if data.len() >= 2 {
+                        state.modbus.monitor_entries.clear();
+                        let mut i = 1;
+                        while i + 1 < data.len() {
+                            let val = u16::from_be_bytes([data[i], data[i + 1]]);
+                            state.modbus.monitor_entries.push(MonitorEntry { addr: addr + (state.modbus.monitor_entries.len() as u16), raw_value: val, display_value: format!("{}", val), last_update: chrono::Utc::now().timestamp_millis(), error: None });
+                            i += 2;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let label = if state.modbus.monitor_polling { T::stop_monitor(lang) } else { T::start_monitor(lang) };
     if ui.button(label).clicked() {
         if state.modbus.monitor_polling { state.modbus.monitor_polling = false; state.modbus.monitor_entries.clear(); }
         else if state.is_connected { state.modbus.monitor_polling = true; state.modbus.last_poll_time = 0; }
     }
-    if state.modbus.monitor_polling && state.is_connected {
+    if state.modbus.monitor_polling && state.is_connected && state.modbus_monitor_async.is_none() {
         let now = chrono::Utc::now().timestamp_millis();
         if now - state.modbus.last_poll_time >= state.modbus.monitor_interval_ms as i64 {
             do_monitor_poll(state);
@@ -162,28 +185,9 @@ fn do_monitor_poll(state: &mut AppState) {
     let qty: u16 = match state.modbus.monitor_quantity.parse() { Ok(v) => v, Err(_) => return };
     let frame = ModbusParser::build_read_request(state.modbus.monitor_slave_id, state.modbus.monitor_function.to_core_function(), addr, qty);
     let req = frame.to_bytes();
-    let mut buf = [0u8; 256];
-    if let Ok(resp) = (|| -> Result<Vec<u8>, String> {
-        let p = state.port.as_mut().ok_or("Not connected")?;
-        p.write(&req).map_err(|e| e.to_string())?;
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let n = p.read(&mut buf).map_err(|e| e.to_string())?;
-        if n < 4 { return Err("No response".into()); }
-        Ok(buf[..n].to_vec())
-    })() {
-        if let Ok(f) = ModbusFrame::parse(&resp) {
-            let data = &f.data;
-            if data.len() >= 2 {
-                state.modbus.monitor_entries.clear();
-                let mut i = 1;
-                while i + 1 < data.len() {
-                    let val = u16::from_be_bytes([data[i], data[i + 1]]);
-                    state.modbus.monitor_entries.push(MonitorEntry { addr: addr + (state.modbus.monitor_entries.len() as u16), raw_value: val, display_value: format!("{}", val), last_update: chrono::Utc::now().timestamp_millis(), error: None });
-                    i += 2;
-                }
-            }
-        }
-    }
+    let port_name = state.selected_port.clone().unwrap_or_default();
+    let baud_rate = state.config.baud_rate;
+    state.modbus_monitor_async = Some(crate::async_utils::spawn_serial_write_read(port_name, baud_rate, req, 50));
 }
 
 fn render_frame_log(ui: &mut egui::Ui, state: &mut AppState) {

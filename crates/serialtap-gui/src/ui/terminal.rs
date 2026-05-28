@@ -18,22 +18,36 @@ pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
                     state.add_log_entry(crate::state::LogLevel::Info, &format!("Received {} bytes", data.len()));
                     // Data logger
                     super::data_logger::log_data(state, "RX", &data);
-                    // Auto-reply
+                    // Auto-reply (async)
                     if state.auto_reply_enabled && !state.auto_reply_pattern.is_empty() && !state.auto_reply_response.is_empty() {
-                        if received.contains(&state.auto_reply_pattern) {
+                        if received.contains(&state.auto_reply_pattern) && state.auto_reply_async.is_none() {
                             let reply = state.auto_reply_response.clone();
                             let reply_bytes = reply.as_bytes().to_vec();
-                            if let Some(ref mut p) = state.port {
-                                if let Ok(_) = p.write(&reply_bytes) {
-                                    state.add_terminal_line(Direction::Tx, reply, false);
-                                    state.add_log_entry(crate::state::LogLevel::Info, &format!("Auto-reply sent: {}", state.auto_reply_response));
-                                }
-                            }
+                            let port_name = state.selected_port.clone().unwrap_or_default();
+                            let baud_rate = state.config.baud_rate;
+                            state.auto_reply_async = Some(crate::async_utils::spawn_serial_write(port_name, baud_rate, reply_bytes));
+                            state.add_terminal_line(Direction::Tx, reply, false);
+                            state.add_log_entry(crate::state::LogLevel::Info, &format!("Auto-reply sent: {}", state.auto_reply_response));
                         }
                     }
                 }
             }
         }
+    }
+
+    // Poll auto-reply write result
+    if let Some(ref rx) = state.auto_reply_async {
+        if let Ok(result) = rx.try_recv() {
+            state.auto_reply_async = None;
+            if let Err(e) = result {
+                state.add_log_entry(crate::state::LogLevel::Error, &format!("Auto-reply error: {}", e));
+            }
+        }
+    }
+
+    // Poll async write result (for chained read-after-write)
+    if let Some(ref rx) = state.terminal_async_receiver {
+        // Already handled above
     }
 
     // Toolbar
@@ -76,7 +90,6 @@ pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
                     Direction::Tx => (egui::Color32::from_rgb(100, 180, 255), "\u{2191} TX"),
                     Direction::System => (egui::Color32::from_rgb(200, 180, 80), "\u{2699} SYS"),
                 };
-                // Use darker text in light mode for better visibility
                 let content_color = if is_dark { egui::Color32::WHITE } else { egui::Color32::BLACK };
                 let ts_color = if is_dark { egui::Color32::from_rgb(150, 150, 150) } else { egui::Color32::from_rgb(100, 100, 100) };
 
@@ -99,7 +112,6 @@ pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
                 };
 
                 ui.horizontal(|ui| {
-                    // Timestamp in muted color
                     if !timestamp.is_empty() {
                         ui.label(
                             egui::RichText::new(&timestamp)
@@ -108,14 +120,12 @@ pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
                                 .monospace(),
                         );
                     }
-                    // Direction indicator with color
                     ui.label(
                         egui::RichText::new(prefix)
                             .color(color)
                             .size(13.0)
                             .strong(),
                     );
-                    // Content
                     ui.label(egui::RichText::new(&content).color(content_color).size(14.0));
                 });
             }
@@ -151,7 +161,6 @@ fn do_send(state: &mut AppState) {
         data.as_bytes().to_vec()
     };
 
-    // Apply CRC checksum if enabled
     bytes = checksum_mode.append_checksum(&bytes);
 
     let display = if hex_mode {
@@ -160,71 +169,55 @@ fn do_send(state: &mut AppState) {
         data.replace("\r", "\\r").replace("\n", "\\n")
     };
 
-    // Write without holding port borrow across state mutations
-    let write_result = if let Some(ref mut port) = state.port {
-        port.write(&bytes).map(|n| {
-            state.tx_count += n as u64;
-            n
-        })
-    } else {
-        return;
-    };
-
-    match write_result {
-        Ok(n) => {
-            state.add_terminal_line(Direction::Tx, display, false);
-            state.add_log_entry(crate::state::LogLevel::Info, &format!("Sent {} bytes", n));
-            // Data logger
-            super::data_logger::log_data(state, "TX", &bytes);
-            // Recording
-            if state.recording {
-                state.script_commands.push(ScriptCommand {
-                    delay_ms: 0,
-                    action: ScriptAction::Send,
-                    data: Some(data.clone()),
-                });
-            }
-        }
-        Err(e) => {
-            state.add_terminal_line(Direction::System, format!("Send error: {}", e), false);
-            state.add_log_entry(crate::state::LogLevel::Error, &e.to_string());
-            return;
-        }
-    }
-
-    // Start async read in background thread
-    if state.terminal_async_receiver.is_none() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let port_name = state.selected_port.clone().unwrap_or_default();
-        let baud_rate = state.config.baud_rate;
-        state.terminal_async_receiver = Some(rx);
-        std::thread::spawn(move || {
-            // Wait a bit for response
-            std::thread::sleep(Duration::from_millis(50));
-            // Try to read
-            let config = serialtap_core::config::SerialConfig {
-                port_name,
-                baud_rate,
-                ..Default::default()
-            };
-            let mut port = serialtap_core::SerialPort::new(config);
-            if port.connect().is_ok() {
-                let mut buf = [0u8; 1024];
-                match port.read(&mut buf) {
-                    Ok(n) if n > 0 => {
-                        let data = buf[..n].to_vec();
-                        let _ = tx.send(Ok(data));
-                    }
-                    _ => {
-                        let _ = tx.send(Ok(Vec::new()));
-                    }
-                }
-                let _ = port.disconnect();
-            } else {
-                let _ = tx.send(Err("Failed to connect for read".into()));
-            }
+    let port_name = state.selected_port.clone().unwrap_or_default();
+    let baud_rate = state.config.baud_rate;
+    state.tx_count += bytes.len() as u64;
+    state.add_terminal_line(Direction::Tx, display, false);
+    state.add_log_entry(crate::state::LogLevel::Info, &format!("Sent {} bytes", bytes.len()));
+    // Data logger
+    super::data_logger::log_data(state, "TX", &bytes);
+    // Recording
+    if state.recording {
+        state.script_commands.push(ScriptCommand {
+            delay_ms: 0,
+            action: ScriptAction::Send,
+            data: Some(data.clone()),
         });
     }
+
+    // Async write, then async read
+    let write_bytes = bytes.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    state.terminal_async_receiver = Some(rx);
+    std::thread::spawn(move || {
+        let config = serialtap_core::config::SerialConfig {
+            port_name: port_name.clone(),
+            baud_rate,
+            ..Default::default()
+        };
+        let mut port = serialtap_core::SerialPort::new(config);
+        if port.connect().is_err() {
+            let _ = tx.send(Err("Connect failed".into()));
+            return;
+        }
+        if port.write(&write_bytes).is_err() {
+            let _ = port.disconnect();
+            let _ = tx.send(Err("Write failed".into()));
+            return;
+        }
+        // Wait for response
+        std::thread::sleep(Duration::from_millis(50));
+        let mut buf = [0u8; 1024];
+        match port.read(&mut buf) {
+            Ok(n) if n > 0 => {
+                let _ = tx.send(Ok(buf[..n].to_vec()));
+            }
+            _ => {
+                let _ = tx.send(Ok(Vec::new()));
+            }
+        }
+        let _ = port.disconnect();
+    });
 }
 
 fn parse_hex(hex_str: &str) -> Option<Vec<u8>> {
