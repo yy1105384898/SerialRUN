@@ -74,21 +74,20 @@ impl<T: Send + 'static> PersistentReader<T> {
         self.receiver.try_recv().ok()
     }
 
-    /// Signal the reader to stop and wait for the thread to finish.
+    /// Signal the reader to stop. Does NOT block — the thread will exit on its own
+    /// within ~50ms when it checks the stop flag (port.read has 50ms timeout).
     pub fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        self.handle.take(); // Drop the handle without joining
     }
 }
 
 impl<T> Drop for PersistentReader<T> {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        // Do NOT call join() — the thread may be blocked on port.read()
+        // which doesn't respect timeout on Windows. Let it exit on its own.
+        let _ = self.handle.take();
     }
 }
 

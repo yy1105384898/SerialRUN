@@ -102,12 +102,15 @@ impl SerialPort {
             })
             .timeout(Duration::from_millis(self.config.timeout_ms));
 
-        let port = builder.open().map_err(|e| {
+        let mut port = builder.open().map_err(|e| {
             PortError::ConnectionFailed(format!(
                 "Failed to open {}: {}",
                 self.config.port_name, e
             ))
         })?;
+
+        // Assert DTR on connect (many devices require this)
+        let _ = port.write_data_terminal_ready(true);
 
         self.port = Some(port);
         self.is_connected = true;
@@ -166,6 +169,25 @@ impl SerialPort {
         let port = self.port.as_mut().ok_or(PortError::NotConnected)?;
         port.set_timeout(timeout)
             .map_err(|e| PortError::WriteError(e.to_string()))
+    }
+
+    pub fn write_data_terminal_ready(&mut self, dtr: bool) -> PortResult<()> {
+        let port = self.port.as_mut().ok_or(PortError::NotConnected)?;
+        port.write_data_terminal_ready(dtr)
+            .map_err(|e| PortError::WriteError(e.to_string()))
+    }
+
+    pub fn write_request_to_send(&mut self, rts: bool) -> PortResult<()> {
+        let port = self.port.as_mut().ok_or(PortError::NotConnected)?;
+        port.write_request_to_send(rts)
+            .map_err(|e| PortError::WriteError(e.to_string()))
+    }
+
+    /// Take ownership of the inner port handle (for passing to reader thread).
+    /// After this call, the SerialPort wrapper is disconnected.
+    pub fn take_port(&mut self) -> Option<Box<dyn serialport::SerialPort>> {
+        self.is_connected = false;
+        self.port.take()
     }
 }
 

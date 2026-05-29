@@ -4,7 +4,7 @@ use eframe::egui;
 pub fn render_chart_panel(ui: &mut egui::Ui, state: &AppState) {
     let lang = state.language;
     ui.horizontal(|ui| {
-        ui.label("Data Rate (bytes/s)");
+        ui.label(T::data_rate(lang));
         ui.separator();
         ui.label(format!("RX: {} {}", state.rx_count, T::bytes(lang)));
         ui.label(format!("TX: {} {}", state.tx_count, T::bytes(lang)));

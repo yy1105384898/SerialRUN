@@ -11,7 +11,7 @@ SerialRUN is a feature-rich serial port debugging assistant supporting serial co
 3. Select a serial port from the dropdown (e.g., COM3)
 4. Set the baud rate (default 115200, works for most devices)
 5. Click the green "Connect" button
-6. Type commands in the bottom terminal input box and press Enter or click "Send"
+6. Type commands in the bottom terminal input box and click "Send"
 
 If you don't know the baud rate, click the **Auto** button to auto-detect.
 
@@ -25,12 +25,12 @@ The toolbar contains 15 function buttons. Click to open/close the corresponding 
 
 | Button | Function | Description |
 |--------|----------|-------------|
-| Log | Log Viewer | Display send/receive records, export to CSV |
+| Log | Log Viewer | Display send/receive records, export to CSV, auto-persisted |
 | Chart | Data Chart | Real-time data rate curve |
 | PLC | PLC Controller | Supports Siemens, Mitsubishi, Delta, Omron |
 | Mod | Modbus Debug | Quick register read/write, 8 function codes |
-| Bridge | TCP/RTU Bridge | Bridge Modbus TCP clients to serial RTU devices |
-| Sim | HMI Simulator | Simulate virtual Modbus slave (TCP/RTU) |
+| TCP | TCP/RTU Bridge | Bridge Modbus TCP clients to serial RTU devices |
+| HMI | HMI Simulator | Simulate virtual Modbus slave (TCP/RTU) |
 | FT | File Transfer | XMODEM/YMODEM/ZMODEM protocols |
 | FB | Frame Builder | Manual Modbus frame construction |
 | DL | Data Logger | Log serial data to CSV file |
@@ -43,8 +43,8 @@ The toolbar contains 15 function buttons. Click to open/close the corresponding 
 
 Three system buttons on the right side of the toolbar:
 - **?** — Open this help guide
-- **Dark/Light** — Switch dark/light theme
-- **EN/中** — Switch English/Chinese interface
+- **Dark/Light** — Switch dark/light theme (auto-saved)
+- **EN/中** — Switch English/Chinese interface (auto-saved)
 
 ### Left Panel
 
@@ -52,9 +52,17 @@ Three system buttons on the right side of the toolbar:
 - **Baud Rate** — Select communication speed: 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600
 - **Auto Button** — Auto-detect baud rate by trying each speed until data is received
 - **Port Config** — Data bits (5-8), stop bits (1/2), parity (None/Odd/Even), flow control (None/Software/Hardware)
-- **Display Settings** — Hex mode, timestamp display, auto-scroll
+- **Display Settings** — HEX mode, timestamp display, auto-scroll
 - **Auto Reply** — Set match pattern and reply content, auto-send reply when matching data is received
+- **MCP Server** — Enable/configure MCP server, view access logs
 - **Record/Replay** — Record serial operation scripts, save and replay later
+
+### Bottom Status Bar
+
+- **Connection Status** — Shows current connected port and baud rate
+- **Data Statistics** — RX/TX byte counters
+- **Error Display** — Red error message (auto-dismiss after 5 seconds)
+- **Warning History** — Red dot + count, click to view warning/error history
 
 ### Terminal Area
 
@@ -64,10 +72,11 @@ Terminal displays all send/receive data with color-coded directions:
 - Yellow `⚙ SYS` — System messages
 
 Top toolbar options:
-- **HEX** — Toggle hex input mode
-- **Show Timestamp** — Display timestamp before each message
+- **TX HEX** — Toggle hex input mode
+- **RX HEX** — Toggle hex display mode for received data
+- **Show Timestamp** — Display timestamp before each message (format: YYYY-MM-DD HH:MM:SS.mmm)
 - **Auto Scroll** — Auto-scroll to latest message
-- **CRC** — Auto-append checksum on send (CRC16/MODBUS, CRC16/CCITT, CRC32, LRC, SUM8)
+- **CRC** — Auto-append checksum on send (8 algorithms)
 
 ---
 
@@ -77,7 +86,8 @@ Top toolbar options:
 
 Records all system events including connect/disconnect, data send/receive, errors, etc.
 - Three log levels: INFO/WARN/ERR with color coding
-- Displays current entry count
+- Displays complete send/receive data (HEX + text)
+- Auto-persisted to `~/.serialrun/logs.json`, survives restart
 - **Clear** — Clear all logs
 - **Export** — Export to CSV file (timestamp, level, message)
 
@@ -112,10 +122,9 @@ Professional minimalist PLC monitoring panel:
 - **Data Types**: BOOL, UINT16, INT16, UINT32, FLOAT32
 - **Batch Read**: Contiguous registers are coalesced into single Modbus requests for faster polling
 - **Inline Write**: Click a register row to edit and write values directly
-- **Scale Factor**: Values are automatically scaled on read; writes apply inverse scaling (e.g., type "25.0" → writes 250 if scale is 0.1)
+- **Scale Factor**: Values are automatically scaled on read; writes apply inverse scaling
 - **Per-register Status**: Green/yellow/red dot indicates data freshness (<3s / <10s / stale)
-- **Error Display**: Failed reads show error in the value column
-- **Auto-poll**: Configurable interval (100-10000ms), click "Poll" to start, "Stop" to halt
+- **Auto-poll**: Configurable interval (100-10000ms)
 
 ### TCP/RTU Bridge
 
@@ -127,8 +136,6 @@ Bridges Modbus TCP clients to serial RTU devices. External SCADA/HMI software ca
 - **Timeout** — Response timeout in milliseconds
 - **Start/Stop** — Toggle bridge operation
 - **Bridge Log** — Shows all bridged requests/responses with timestamps
-
-Workflow: Configure TCP port and serial settings → Click "Start Bridge" → External TCP clients can now access the serial device.
 
 ### HMI Simulator
 
@@ -142,8 +149,6 @@ Simulates a virtual Modbus slave device. Useful for testing PLC programs, SCADA 
 - **Coils** — Toggle coil on/off states, add new coils
 - **Simulator Log** — Shows all received requests and responses
 
-Workflow: Configure mode and settings → Set register/coil values → Click "Start Simulator" → Modbus masters can read/write the virtual registers.
-
 ### File Transfer
 
 Transfer files via serial port with these protocols:
@@ -151,8 +156,6 @@ Transfer files via serial port with these protocols:
 - **XMODEM-CRC** — CRC checksum, more reliable
 - **YMODEM** — Supports file name and size info
 - **ZMODEM** — Advanced protocol with resume support
-
-Workflow: Select protocol → Click send/receive → Choose file → Wait for completion
 
 ### Frame Builder
 
@@ -215,8 +218,6 @@ Supports firmware flashing for two MCU types:
 - Supports BIN and ELF firmware formats
 - Chunked write (128 bytes/block)
 
-Workflow: Select MCU type → Connect → Select firmware file → Erase (optional) → Flash
-
 ### Register Editor
 
 Custom device register map table:
@@ -244,6 +245,196 @@ Scans `plugins/` directory for extension plugins:
 - Use **Record/Replay** to quickly repeat test sequences
 - For Modbus debugging, use "Quick Request" first to verify connectivity, then "Register Monitor" for continuous observation
 - PLC controller supports custom brands — import your own register definitions
+- All configuration and logs auto-save to `~/.serialrun/` directory, survives restart
+
+---
+
+## Recording & Replay
+
+SerialRUN supports recording serial operations and replaying them for repeated test sequences.
+
+### Recording
+
+1. Find the "Record / Replay" section in the left panel
+2. Click **Start Recording** — status bar shows red `● Recording`
+3. Use the terminal normally to send data (all sent commands are recorded, including timing intervals)
+4. Click **Stop Recording** — shows the number of recorded commands
+
+### Saving Scripts
+
+After recording, click the **Save** button:
+- Supports `.txt` and `.srs` formats
+- Script files are plain text, one command per line:
+  - `SEND data content` — send command
+  - `WAIT milliseconds` — wait for specified time
+
+### Loading Scripts
+
+Click the **Import** button to load a previously saved script file.
+
+### Replaying
+
+1. Ensure serial device is connected
+2. Click the green **▶ Replay** button
+3. Script executes automatically with recorded timing intervals
+4. Progress bar shows current progress
+5. Click red **■ Stop** at any time to interrupt replay
+
+### Script File Example
+
+```
+# SerialRUN Script
+SEND AT
+WAIT 500
+SEND AT+RST
+WAIT 1000
+SEND AT+CWMODE=1
+```
+
+---
+
+## Terminal Advanced Features
+
+### HEX Mode
+
+The terminal supports independent TX/RX HEX modes:
+- **TX HEX** — When checked, input is parsed as hexadecimal (e.g., `48 65 6C 6C 6F`)
+- **RX HEX** — When checked, received data displays as space-separated hex (e.g., `4F 4B 0D 0A`)
+- Supports `0x` prefixes (e.g., `0x48 0x65`), auto-strips spaces
+
+### Line Endings
+
+Automatically append line endings when sending text:
+- **None** — No characters appended
+- **CR (\r)** — Carriage return, common for serial terminals
+- **LF (\n)** — Line feed, common for network protocols
+- **CRLF (\r\n)** — CR+LF, HTTP/Modbus ASCII standard
+
+### Auto Send
+
+Click **Auto** to repeatedly send the input content at a set interval:
+- Configurable interval (100ms - 60s)
+- Useful for heartbeat packets, polling requests, etc.
+- Click **Stop Auto** to cancel
+
+### DTR/RTS Control
+
+When connected, DTR and RTS checkboxes appear in the terminal toolbar:
+- **DTR (Data Terminal Ready)** — Data terminal ready signal
+- **RTS (Request To Send)** — Request to send signal
+- Some devices (e.g., Arduino) require DTR to be asserted for communication
+
+### Keep Input
+
+The **Keep input** checkbox on the left of the terminal input:
+- When checked, sent data is not cleared from the input box
+- Useful for repeatedly sending the same command during debugging
+- Default: off (input clears after sending)
+
+### Checksum
+
+Automatically append checksums when sending, supporting 8 algorithms:
+- **CRC-16/MODBUS** — Modbus RTU standard (polynomial 0xA001)
+- **CRC-16/CCITT** — CCITT standard (polynomial 0x1021)
+- **CRC-16/XMODEM** — XMODEM file transfer protocol
+- **CRC-32** — 32-bit CRC (ZIP/Ethernet)
+- **LRC** — Longitudinal Redundancy Check (Modbus ASCII)
+- **Checksum-8** — 8-bit additive
+- **Checksum-16** — 16-bit additive
+
+Hover over algorithm names in the Checksum panel for detailed descriptions.
+
+---
+
+## Error Notification System
+
+SerialRUN has a unified error notification system:
+
+### Bottom Status Bar
+
+- All errors/warnings display in the bottom status bar
+- Red `✗` icon + error message
+- Auto-dismiss after 5 seconds
+- Also recorded to log and warning history
+
+### Warning History
+
+- Red dot + count displayed on the right side of status bar (e.g., `● 3`)
+- Click to open warning/error history window
+- Shows last 50 entries with timestamps and details
+- Support clearing history
+- History auto-saved to `~/.serialrun/warnings.json`
+
+---
+
+## MCP Server
+
+SerialRUN includes a built-in MCP (Model Context Protocol) server, allowing AI assistants to remotely control serial devices via TCP.
+All serial operations are routed through the GUI's port manager, ensuring no conflict with GUI operations.
+
+### Setup
+
+In the left settings panel, find "MCP Server":
+1. Check "Enable MCP Server"
+2. Set the port number (default 9527)
+3. Choose bind address:
+   - **Localhost only** — Only local AI assistants can connect (recommended)
+   - **All interfaces (LAN)** — Allow LAN AI assistants to connect
+
+### Available Tools (11)
+
+| Tool | Description |
+|------|-------------|
+| `list_ports` | List all available serial ports |
+| `connect` | Connect to serial port (supports baud rate, data bits, stop bits, parity) |
+| `disconnect` | Disconnect from current connection |
+| `send` | Send data (supports text and hex) |
+| `read` | Read data (with timeout) |
+| `send_command` | Send command and wait for response (write-read mode) |
+| `modbus_read` | Read Modbus RTU holding registers |
+| `modbus_write` | Write Modbus RTU holding register |
+| `plc_read` | Read all registers from a PLC preset brand |
+| `plc_write` | Write to a PLC register by address |
+| `get_access_log` | View access log (client IPs, tool calls, timestamps) |
+
+### Usage
+
+1. Open the Help panel (click `?` button)
+2. In the MCP Server section, click **Copy MCP Guide**
+3. Paste the copied content to any MCP-capable AI assistant
+4. The AI assistant can then control your serial devices via TCP
+
+AI assistants can use the `tools/list` method to discover all available tools and their parameters.
+
+### Access Log
+
+- All MCP operations automatically log client IP addresses
+- Left settings panel shows last 20 access records
+- Color coded: 🟢 CONNECT, 🔴 DISCONNECT, 🔵 CALL
+- Query full log via `get_access_log` tool
+
+### LAN Mode
+
+When LAN mode is enabled:
+- Shows your local IP address and port (e.g., `192.168.1.100:9527`)
+- AI assistants on other LAN devices can connect
+- All operations are automatically logged with client IP (use `get_access_log` tool to view)
+- ⚠️ Use with caution — anyone on the network can control serial ports
+
+---
+
+## Data Persistence
+
+SerialRUN automatically saves the following data to `~/.serialrun/` directory:
+
+| File | Content | Save Trigger |
+|------|---------|--------------|
+| `config.toml` | Theme, language, baud rate, etc. | When settings change |
+| `logs.json` | Log records | Auto-save every 10 entries |
+| `terminal.json` | Terminal send/receive records | Auto-save every 5 entries |
+| `warnings.json` | Warning/error history | On each new entry |
+
+All data automatically restores on app restart.
 
 ---
 
@@ -280,3 +471,6 @@ A: The MCP server is enabled by default on port 9527 (localhost). Configure in S
 
 **Q: File transfer fails?**
 A: Ensure both sides use the same protocol, check serial connection stability, try lowering the baud rate.
+
+**Q: Data lost after restart?**
+A: All data is auto-saved to `~/.serialrun/` directory. Check if the directory exists and has write permissions.

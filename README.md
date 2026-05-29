@@ -20,7 +20,7 @@
 - **CLI & GUI** — Command-line for automation, desktop app for interactive use
 - **Protocol Support** — Modbus RTU/TCP parsing, custom protocol patterns
 - **Data Visualization** — Real-time charts and statistics
-- **Script Recording** — Record and replay serial communication sessions
+- **Script Recording** — Record and replay serial communication sessions with timing
 - **File Transfer** — XMODEM / YMODEM / ZMODEM support
 - **CAN Bus Analyzer** — SLCAN protocol parsing, frame filtering, per-ID statistics
 - **I2C/SPI Debug** — Register read/write with address and data width config
@@ -31,10 +31,13 @@
 - **Frame Builder** — Visual Modbus frame construction with live hex preview
 - **PLC Control** — Modbus register polling with brand presets (Siemens, Mitsubishi, etc.)
 - **Plugin System** — Extensible architecture with dynamic plugin loading
-- **MCP Server** — Built-in TCP server for AI assistant integration
+- **MCP Server** — Built-in TCP server with 11 tools for AI assistant integration
+- **Access Logging** — All MCP operations logged with client IP for traceability
 - **HEX Mode** — Send and receive data in hexadecimal format
 - **Auto Reply** — Automatically respond to matched patterns
 - **Bilingual UI** — English / Chinese language switching, Dark / Light themes
+- **Data Persistence** — Configuration, logs, terminal history, and warnings auto-saved
+- **Global Error System** — Unified error notifications in status bar with history
 
 ## Quick Start
 
@@ -79,7 +82,7 @@ serialrun-gui
 1. Connect your serial device via USB
 2. Click **Refresh** to detect the port
 3. Select port and baud rate, click **Connect**
-4. Type commands in the input box and press Enter
+4. Type commands in the input box and click **Send**
 
 ## Project Structure
 
@@ -103,7 +106,7 @@ SerialRUN/
 
 | Panel | Description |
 |-------|-------------|
-| Terminal | Serial TX/RX with HEX mode, timestamps, CRC |
+| Terminal | Serial TX/RX with HEX mode, timestamps, CRC, recording |
 | Modbus | RTU monitor with function code parsing |
 | PLC Control | Register polling with brand presets |
 | CAN Bus | SLCAN frame capture and analysis |
@@ -116,7 +119,9 @@ SerialRUN/
 | Register Editor | Import/export register maps |
 | Chart | Multi-series real-time data visualization |
 | Plugin Manager | Dynamic plugin discovery and loading |
-| Log Viewer | Application log with filter and export |
+| Log Viewer | Application log with filter, export, and persistence |
+| TCP Bridge | Modbus TCP to RTU bridge |
+| HMI Simulator | Virtual Modbus slave simulator |
 
 ## Build for Different Platforms
 
@@ -140,14 +145,43 @@ serialrun agent COM1 run-script test.txt  # Run script
 
 ## MCP Server
 
-SerialRUN includes a built-in MCP server for AI assistant integration.
+SerialRUN includes a built-in MCP server with 11 tools for AI assistant integration. All serial operations are routed through the GUI's port manager.
 
-```bash
-# Start MCP server (default: 127.0.0.1:9527)
-serialrun-mcp
-```
+### Available Tools
 
-Available tools: `list_ports`, `connect`, `disconnect`, `send`, `read`, `send_command`.
+| Tool | Description |
+|------|-------------|
+| `list_ports` | List all available serial ports |
+| `connect` | Connect to serial port |
+| `disconnect` | Disconnect from current connection |
+| `send` | Send data (text or hex) |
+| `read` | Read data with timeout |
+| `send_command` | Send command and wait for response |
+| `modbus_read` | Read Modbus RTU holding registers |
+| `modbus_write` | Write Modbus RTU holding register |
+| `plc_read` | Read all registers from a PLC preset brand |
+| `plc_write` | Write to a PLC register by address |
+| `get_access_log` | View access log with client IPs |
+
+### Features
+
+- All operations logged with client IP for traceability
+- Supports multiple concurrent clients
+- Localhost or LAN mode
+- Access log visible in GUI settings panel
+
+See [docs/help_en.md](docs/help_en.md) for the full MCP guide with JSON-RPC examples.
+
+## Data Persistence
+
+SerialRUN automatically saves data to `~/.serialrun/` directory:
+
+| File | Content |
+|------|---------|
+| `config.toml` | Theme, language, baud rate settings |
+| `logs.json` | Application logs |
+| `terminal.json` | Terminal send/receive history |
+| `warnings.json` | Warning/error history |
 
 ## Plugin Development
 
@@ -165,6 +199,8 @@ See [plugins/example-plugin/](plugins/example-plugin/) for a complete example.
 
 | Document | Description |
 |----------|-------------|
+| [docs/help_en.md](docs/help_en.md) | English user guide |
+| [docs/help_zh.md](docs/help_zh.md) | Chinese user guide |
 | [docs/MANUAL.md](docs/MANUAL.md) | User manual |
 | [docs/SKILL.md](docs/SKILL.md) | Skill reference |
 | [docs/BUILD.md](docs/BUILD.md) | Build guide |

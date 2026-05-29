@@ -4,13 +4,46 @@ use serialrun_core::{SerialPort, SerialPortInfo};
 use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc;
 
-#[derive(Clone, Copy, PartialEq)]
+/// Persisted user preferences (theme, language, serial config, etc.)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UserPrefs {
+    pub theme: Theme,
+    pub language: Language,
+    #[serde(default = "default_baud_rate")]
+    pub baud_rate: u32,
+    #[serde(default = "default_data_bits")]
+    pub data_bits: String,
+    #[serde(default = "default_stop_bits")]
+    pub stop_bits: String,
+    #[serde(default = "default_parity")]
+    pub parity: String,
+}
+
+fn default_baud_rate() -> u32 { 115200 }
+fn default_data_bits() -> String { "8".into() }
+fn default_stop_bits() -> String { "1".into() }
+fn default_parity() -> String { "None".into() }
+
+impl Default for UserPrefs {
+    fn default() -> Self {
+        Self {
+            theme: Theme::Dark,
+            language: Language::Chinese,
+            baud_rate: 115200,
+            data_bits: "8".into(),
+            stop_bits: "1".into(),
+            parity: "None".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Language {
     English,
     Chinese,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Theme {
     Dark,
     Light,
@@ -32,6 +65,32 @@ impl Theme {
             (Theme::Dark, Language::Chinese) => "深色",
             (Theme::Light, Language::English) => "Light",
             (Theme::Light, Language::Chinese) => "浅色",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LineEnding {
+    None,
+    CR,
+    LF,
+    CRLF,
+}
+impl LineEnding {
+    pub fn suffix(&self) -> &'static [u8] {
+        match self {
+            LineEnding::None => b"",
+            LineEnding::CR => b"\r",
+            LineEnding::LF => b"\n",
+            LineEnding::CRLF => b"\r\n",
+        }
+    }
+    pub fn label(&self, lang: Language) -> &'static str {
+        match self {
+            LineEnding::None => if lang == Language::Chinese { "无" } else { "None" },
+            LineEnding::CR => "CR (\\r)",
+            LineEnding::LF => "LF (\\n)",
+            LineEnding::CRLF => "CRLF (\\r\\n)",
         }
     }
 }
@@ -492,6 +551,87 @@ impl T {
     pub fn mcp_running(l: Language) -> &'static str { match l { Language::English => "Running", Language::Chinese => "运行中" } }
     pub fn mcp_stopped(l: Language) -> &'static str { match l { Language::English => "Stopped", Language::Chinese => "已停止" } }
     pub fn mcp_warning(l: Language) -> &'static str { match l { Language::English => "LAN mode: anyone on the network can control serial ports. Use with caution.", Language::Chinese => "局域网模式：网络中任何人都可以控制串口端口，请谨慎使用。" } }
+
+    // ── Terminal ──
+    pub fn tx_hex(l: Language) -> &'static str { match l { Language::English => "TX HEX", Language::Chinese => "发送HEX" } }
+    pub fn rx_hex(l: Language) -> &'static str { match l { Language::English => "RX HEX", Language::Chinese => "接收HEX" } }
+    pub fn crc_label(l: Language) -> &'static str { match l { Language::English => "CRC:", Language::Chinese => "CRC:" } }
+    pub fn line_ending(l: Language) -> &'static str { match l { Language::English => "End:", Language::Chinese => "行尾:" } }
+    pub fn auto_send(l: Language) -> &'static str { match l { Language::English => "Auto", Language::Chinese => "自动发送" } }
+    pub fn stop_auto(l: Language) -> &'static str { match l { Language::English => "Stop Auto", Language::Chinese => "停止发送" } }
+    pub fn save_btn(l: Language) -> &'static str { match l { Language::English => "Save", Language::Chinese => "保存" } }
+
+    // ── Checksum ──
+    pub fn algorithm(l: Language) -> &'static str { match l { Language::English => "Algorithm", Language::Chinese => "算法" } }
+    pub fn result_label(l: Language) -> &'static str { match l { Language::English => "Result", Language::Chinese => "结果" } }
+
+    // ── I2C/SPI ──
+    pub fn address_hex(l: Language) -> &'static str { match l { Language::English => "Address (hex):", Language::Chinese => "地址 (hex):" } }
+    pub fn register_hex(l: Language) -> &'static str { match l { Language::English => "Register (hex):", Language::Chinese => "寄存器 (hex):" } }
+    pub fn data_hex(l: Language) -> &'static str { match l { Language::English => "Data (hex):", Language::Chinese => "数据 (hex):" } }
+    pub fn read_btn(l: Language) -> &'static str { match l { Language::English => "Read", Language::Chinese => "读取" } }
+    pub fn write_btn(l: Language) -> &'static str { match l { Language::English => "Write", Language::Chinese => "写入" } }
+    pub fn transfer_btn(l: Language) -> &'static str { match l { Language::English => "Transfer", Language::Chinese => "传输" } }
+    pub fn mosi(l: Language) -> &'static str { match l { Language::English => "MOSI (hex):", Language::Chinese => "MOSI (hex):" } }
+    pub fn result_colon(l: Language) -> &'static str { match l { Language::English => "Result:", Language::Chinese => "结果:" } }
+
+    // ── Flasher ──
+    pub fn serial_flasher(l: Language) -> &'static str { match l { Language::English => "Serial Flasher", Language::Chinese => "串口烧录器" } }
+    pub fn mcu_label(l: Language) -> &'static str { match l { Language::English => "MCU:", Language::Chinese => "MCU:" } }
+    pub fn firmware(l: Language) -> &'static str { match l { Language::English => "Firmware:", Language::Chinese => "固件:" } }
+
+    // ── Register Editor ──
+    pub fn register_map_editor(l: Language) -> &'static str { match l { Language::English => "Register Map Editor", Language::Chinese => "寄存器映射编辑" } }
+    pub fn add_btn(l: Language) -> &'static str { match l { Language::English => "Add", Language::Chinese => "添加" } }
+    pub fn alarm(l: Language) -> &'static str { match l { Language::English => "Alarm", Language::Chinese => "报警" } }
+    pub fn threshold(l: Language) -> &'static str { match l { Language::English => "Threshold:", Language::Chinese => "阈值:" } }
+
+    // ── Plugin ──
+    pub fn refresh_btn(l: Language) -> &'static str { match l { Language::English => "Refresh", Language::Chinese => "刷新" } }
+    pub fn no_plugins(l: Language) -> &'static str { match l { Language::English => "No plugins found.", Language::Chinese => "未找到插件。" } }
+    pub fn plugin_hint(l: Language) -> &'static str { match l { Language::English => "Place .dylib/.so/.dll plugins in the plugins/ directory next to the executable.", Language::Chinese => "将 .dylib/.so/.dll 插件放在可执行文件旁的 plugins/ 目录中。" } }
+
+    // ── Frame Builder ──
+    pub fn build_btn(l: Language) -> &'static str { match l { Language::English => "Build", Language::Chinese => "构建" } }
+
+    // ── File Transfer ──
+    pub fn done(l: Language) -> &'static str { match l { Language::English => "Done", Language::Chinese => "完成" } }
+    pub fn sending(l: Language) -> &'static str { match l { Language::English => "Sending...", Language::Chinese => "发送中..." } }
+    pub fn receiving(l: Language) -> &'static str { match l { Language::English => "Receiving...", Language::Chinese => "接收中..." } }
+    pub fn ready(l: Language) -> &'static str { match l { Language::English => "Ready", Language::Chinese => "就绪" } }
+
+    // ── Data Logger ──
+    pub fn log_label(l: Language) -> &'static str { match l { Language::English => "Log:", Language::Chinese => "日志:" } }
+    pub fn data_rate(l: Language) -> &'static str { match l { Language::English => "Data Rate (bytes/s)", Language::Chinese => "数据速率 (bytes/s)" } }
+
+    // ── Scope ──
+    pub fn timebase(l: Language) -> &'static str { match l { Language::English => "Timebase (ms):", Language::Chinese => "时基 (ms):" } }
+
+    // ── CAN ──
+    pub fn statistics(l: Language) -> &'static str { match l { Language::English => "Statistics", Language::Chinese => "统计" } }
+    pub fn frames_label(l: Language) -> &'static str { match l { Language::English => "Frames", Language::Chinese => "帧" } }
+    pub fn filter_label(l: Language) -> &'static str { match l { Language::English => "Filter:", Language::Chinese => "过滤:" } }
+    pub fn tx_id(l: Language) -> &'static str { match l { Language::English => "TX ID:", Language::Chinese => "发送 ID:" } }
+    pub fn data_label(l: Language) -> &'static str { match l { Language::English => "Data:", Language::Chinese => "数据:" } }
+    pub fn bus_load(l: Language) -> &'static str { match l { Language::English => "Bus Load:", Language::Chinese => "总线负载:" } }
+    pub fn max_id(l: Language) -> &'static str { match l { Language::English => "Max ID:", Language::Chinese => "最大 ID:" } }
+    pub fn errors(l: Language) -> &'static str { match l { Language::English => "Errors:", Language::Chinese => "错误:" } }
+    pub fn id_count(l: Language) -> &'static str { match l { Language::English => "IDs:", Language::Chinese => "ID数:" } }
+
+    // ── PLC ──
+    pub fn once_btn(l: Language) -> &'static str { match l { Language::English => "Once", Language::Chinese => "单次" } }
+    pub fn poll_btn(l: Language) -> &'static str { match l { Language::English => "Poll", Language::Chinese => "轮询" } }
+    pub fn stop_btn(l: Language) -> &'static str { match l { Language::English => "Stop", Language::Chinese => "停止" } }
+
+    // ── Help / Copy ──
+    pub fn copy_mcp_guide(l: Language) -> &'static str { match l { Language::English => "Copy MCP Guide (for AI assistant)", Language::Chinese => "复制 MCP 说明（发给 AI 助手）" } }
+    pub fn copied(l: Language) -> &'static str { match l { Language::English => "Copied!", Language::Chinese => "已复制!" } }
+    pub fn copy_hint(l: Language) -> &'static str { match l { Language::English => "Click to copy the full MCP guide. Paste into your AI assistant for serial port control.", Language::Chinese => "点击复制完整 MCP 说明，粘贴到 AI 助手中即可控制串口。" } }
+
+    // ── Status messages ──
+    pub fn listening_hint(l: Language) -> &'static str { match l { Language::English => "Waiting for Modbus TCP client connections.", Language::Chinese => "等待 Modbus TCP 客户端连接。" } }
+    pub fn bridge_hint(l: Language) -> &'static str { match l { Language::English => "TCP clients can now connect to relay serial data.", Language::Chinese => "TCP 客户端可连接此地址进行串口中转。" } }
+    pub fn keep_input(l: Language) -> &'static str { match l { Language::English => "Keep input", Language::Chinese => "保留输入" } }
 }
 
 // ── Modbus types ──
@@ -573,13 +713,13 @@ pub struct PlcRegisterDef { pub addr: u16, pub name: String, pub data_type: PlcD
 // ── Checksum mode ──
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum ChecksumMode { None, Crc16Modbus, Crc16Ccitt, Crc32, Lrc, Checksum8 }
+pub enum ChecksumMode { None, Crc16Modbus, Crc16Ccitt, Crc16Xmodem, Crc32, Lrc, Checksum8, Checksum16 }
 impl ChecksumMode {
-    pub fn label(&self, l: Language) -> &'static str { match (self, l) { (Self::None, Language::English)=>"None", (Self::None, Language::Chinese)=>"无", (Self::Crc16Modbus, _)=>"CRC16/MODBUS", (Self::Crc16Ccitt, _)=>"CRC16/CCITT", (Self::Crc32, _)=>"CRC32", (Self::Lrc, _)=>"LRC", (Self::Checksum8, _)=>"SUM8" } }
-    pub fn all() -> &'static [Self] { &[Self::None, Self::Crc16Modbus, Self::Crc16Ccitt, Self::Crc32, Self::Lrc, Self::Checksum8] }
+    pub fn label(&self, l: Language) -> &'static str { match (self, l) { (Self::None, Language::English)=>"None", (Self::None, Language::Chinese)=>"无", (Self::Crc16Modbus, _)=>"CRC16/MODBUS", (Self::Crc16Ccitt, _)=>"CRC16/CCITT", (Self::Crc16Xmodem, _)=>"CRC16/XMODEM", (Self::Crc32, _)=>"CRC32", (Self::Lrc, _)=>"LRC", (Self::Checksum8, _)=>"SUM8", (Self::Checksum16, _)=>"SUM16" } }
+    pub fn all() -> &'static [Self] { &[Self::None, Self::Crc16Modbus, Self::Crc16Ccitt, Self::Crc16Xmodem, Self::Crc32, Self::Lrc, Self::Checksum8, Self::Checksum16] }
     pub fn append_checksum(&self, data: &[u8]) -> Vec<u8> {
         let mut r = data.to_vec();
-        match self { Self::None => return data.to_vec(), Self::Crc16Modbus => { let c = serialrun_core::checksum::crc16_modbus(data); r.extend_from_slice(&c.to_le_bytes()); } Self::Crc16Ccitt => { let c = serialrun_core::checksum::crc16_ccitt(data); r.extend_from_slice(&c.to_be_bytes()); } Self::Crc32 => { let c = serialrun_core::checksum::crc32(data); r.extend_from_slice(&c.to_le_bytes()); } Self::Lrc => r.push(serialrun_core::checksum::lrc(data)), Self::Checksum8 => r.push(serialrun_core::checksum::checksum8(data)), }
+        match self { Self::None => return data.to_vec(), Self::Crc16Modbus => { let c = serialrun_core::checksum::crc16_modbus(data); r.extend_from_slice(&c.to_le_bytes()); } Self::Crc16Ccitt => { let c = serialrun_core::checksum::crc16_ccitt(data); r.extend_from_slice(&c.to_be_bytes()); } Self::Crc16Xmodem => { let c = serialrun_core::checksum::crc16_xmodem(data); r.extend_from_slice(&c.to_be_bytes()); } Self::Crc32 => { let c = serialrun_core::checksum::crc32(data); r.extend_from_slice(&c.to_le_bytes()); } Self::Lrc => r.push(serialrun_core::checksum::lrc(data)), Self::Checksum8 => r.push(serialrun_core::checksum::checksum8(data)), Self::Checksum16 => { let c = serialrun_core::checksum::checksum16(data); r.extend_from_slice(&c.to_be_bytes()); } }
         r
     }
 }
@@ -658,12 +798,20 @@ pub struct AppState {
     pub selected_port: Option<String>,
     pub config: SerialConfig,
     pub is_connected: bool,
-    pub port: Option<SerialPort>,
     pub terminal_buffer: VecDeque<TerminalLine>,
     pub input_buffer: String,
     pub hex_mode: bool,
+    pub rx_hex_mode: bool,
     pub auto_scroll: bool,
     pub show_timestamp: bool,
+    // SSCOM-like features
+    pub line_ending: LineEnding,
+    pub dtr: bool,
+    pub rts: bool,
+    pub auto_send_enabled: bool,
+    pub auto_send_interval_ms: u64,
+    pub auto_send_last_time: i64,
+    pub keep_input: bool,
     pub terminal_checksum_mode: ChecksumMode,
     pub show_chart_window: bool,
     pub show_log_window: bool,
@@ -675,7 +823,13 @@ pub struct AppState {
     pub auto_reply_pattern: String,
     pub auto_reply_response: String,
     pub recording: bool,
+    pub recording_last_time: i64,
     pub script_commands: Vec<ScriptCommand>,
+    // Replay
+    pub replay_running: bool,
+    pub replay_commands: Vec<ScriptCommand>,
+    pub replay_index: usize,
+    pub replay_start_time: i64,
     pub language: Language,
     pub theme: Theme,
     pub show_help: bool,
@@ -745,8 +899,24 @@ pub struct AppState {
     // Help guide (external markdown)
     pub help_content_zh: String,
     pub help_content_en: String,
+    // Copy button state (help panel)
+    pub copied: bool,
+    pub copied_time: i64,
+    // Terminal line copy feedback
+    pub term_copied_ts: i64,
+    pub term_copied_time: i64,
     // Auto-detect
     pub auto_detect_receiver: Option<std::sync::mpsc::Receiver<Option<u32>>>,
+    pub auto_detect_running: bool,
+    // Port owner (persistent reader/writer thread)
+    pub port_owner: Option<crate::port_owner::PortOwnerHandle>,
+    // HEX input error message
+    pub hex_error: Option<String>,
+    // Global error notification
+    pub global_error: Option<String>,
+    pub global_error_time: i64,
+    pub warning_history: VecDeque<WarningEntry>,
+    pub show_warning_popup: bool,
     // Async operation states
     pub modbus_async_receiver: Option<std::sync::mpsc::Receiver<Result<Vec<u8>, String>>>,
     pub plc_async_receiver: Option<std::sync::mpsc::Receiver<Result<Vec<(u16, std::result::Result<Vec<u8>, String>)>, String>>>,
@@ -761,7 +931,9 @@ pub struct AppState {
     pub fb_write_async: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     // Persistent readers (continuous capture)
     pub can_reader: Option<crate::async_utils::PersistentReader<Vec<CanFrameData>>>,
+    pub can_write_tx: Option<std::sync::mpsc::Sender<Vec<u8>>>,
     pub scope_reader: Option<crate::async_utils::PersistentReader<Vec<ScopeDataPoint>>>,
+    pub scope_write_tx: Option<std::sync::mpsc::Sender<Vec<u8>>>,
     // File transfer async
     pub file_transfer_thread: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     pub file_transfer_progress_rx: Option<std::sync::mpsc::Receiver<(u64, u64)>>,
@@ -782,9 +954,11 @@ pub struct AppState {
     pub mcp_running: bool,
     pub mcp_status: String,
     pub mcp_cmd_tx: Option<mpsc::Sender<crate::mcp_server::McpCommand>>,
+    // MCP access log (for GUI display)
+    pub mcp_access_log: VecDeque<crate::mcp_server::McpAccessLogEntry>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TerminalLine {
     pub timestamp: i64,
     pub direction: Direction,
@@ -792,7 +966,7 @@ pub struct TerminalLine {
     pub is_hex: bool,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Direction {
     Rx,
     Tx,
@@ -809,32 +983,74 @@ impl std::fmt::Display for Direction {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct LogEntry {
     pub timestamp: i64,
     pub level: LogLevel,
     pub message: String,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum LogLevel {
     Info,
     Warning,
     Error,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct WarningEntry {
+    pub timestamp: i64,
+    pub message: String,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ScriptCommand {
     pub delay_ms: u64,
     pub action: ScriptAction,
     pub data: Option<String>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ScriptAction {
     Send,
     Wait,
-    Read,
+}
+
+impl ScriptCommand {
+    /// Serialize to text line: "SEND data" or "WAIT 500"
+    pub fn to_text_line(&self) -> String {
+        match self.action {
+            ScriptAction::Send => {
+                let data = self.data.as_deref().unwrap_or("");
+                format!("SEND {}", data)
+            }
+            ScriptAction::Wait => format!("WAIT {}", self.delay_ms),
+        }
+    }
+
+    /// Parse from text line
+    pub fn from_text_line(line: &str) -> Option<Self> {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        if let Some(data) = line.strip_prefix("SEND ") {
+            Some(ScriptCommand {
+                delay_ms: 0,
+                action: ScriptAction::Send,
+                data: Some(data.to_string()),
+            })
+        } else if let Some(ms_str) = line.strip_prefix("WAIT ") {
+            let delay_ms = ms_str.parse::<u64>().unwrap_or(100);
+            Some(ScriptCommand {
+                delay_ms,
+                action: ScriptAction::Wait,
+                data: None,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 fn load_help_file(filename: &str) -> String {
@@ -864,17 +1080,24 @@ fn load_help_file(filename: &str) -> String {
 
 impl AppState {
     pub fn new() -> Self {
-        Self {
+        let mut state = Self {
             ports: Vec::new(),
             selected_port: None,
             config: SerialConfig::default(),
             is_connected: false,
-            port: None,
             terminal_buffer: VecDeque::new(),
             input_buffer: String::new(),
             hex_mode: false,
+            rx_hex_mode: false,
             auto_scroll: true,
             show_timestamp: true,
+            line_ending: LineEnding::None,
+            dtr: true,
+            rts: false,
+            auto_send_enabled: false,
+            auto_send_interval_ms: 1000,
+            auto_send_last_time: 0,
+            keep_input: false,
             terminal_checksum_mode: ChecksumMode::None,
             show_chart_window: false,
             show_log_window: false,
@@ -886,7 +1109,12 @@ impl AppState {
             auto_reply_pattern: String::new(),
             auto_reply_response: String::new(),
             recording: false,
+            recording_last_time: 0,
             script_commands: Vec::new(),
+            replay_running: false,
+            replay_commands: Vec::new(),
+            replay_index: 0,
+            replay_start_time: 0,
             language: Language::Chinese,
             theme: Theme::Dark,
             show_help: false,
@@ -919,7 +1147,18 @@ impl AppState {
             plugins: Vec::new(),
             help_content_zh: load_help_file("help_zh.md"),
             help_content_en: load_help_file("help_en.md"),
+            copied: false,
+            copied_time: 0,
+            term_copied_ts: 0,
+            term_copied_time: 0,
             auto_detect_receiver: None,
+            auto_detect_running: false,
+            port_owner: None,
+            hex_error: None,
+            global_error: None,
+            global_error_time: 0,
+            warning_history: VecDeque::new(),
+            show_warning_popup: false,
             modbus_async_receiver: None,
             plc_async_receiver: None,
             i2c_async_receiver: None,
@@ -931,7 +1170,9 @@ impl AppState {
             auto_reply_async: None,
             fb_write_async: None,
             can_reader: None,
+            can_write_tx: None,
             scope_reader: None,
+            scope_write_tx: None,
             file_transfer_thread: None,
             file_transfer_progress_rx: None,
             bridge: BridgeState {
@@ -949,7 +1190,13 @@ impl AppState {
             sim_stop: None, sim_log_rx: None, sim_err_rx: None, sim_registers: None,
             mcp_enabled: true, mcp_port: 9527, mcp_bind_lan: false, mcp_running: false, mcp_status: String::new(),
             mcp_cmd_tx: None,
-        }
+            mcp_access_log: VecDeque::new(),
+        };
+        // Load persisted data from previous session
+        state.load_logs();
+        state.load_terminal();
+        state.load_warnings();
+        state
     }
 
     pub fn refresh_ports(&mut self) {
@@ -967,6 +1214,10 @@ impl AppState {
         if self.terminal_buffer.len() > 1000 {
             self.terminal_buffer.pop_front();
         }
+        // Auto-save every 5 lines
+        if self.terminal_buffer.len() % 5 == 0 {
+            self.save_terminal();
+        }
     }
 
     pub fn add_log_entry(&mut self, level: LogLevel, message: &str) {
@@ -979,6 +1230,101 @@ impl AppState {
         if self.log_entries.len() > 500 {
             self.log_entries.remove(0);
         }
+        // Auto-save every 10 entries
+        if self.log_entries.len() % 10 == 0 {
+            self.save_logs();
+        }
+    }
+
+    fn save_logs(&self) {
+        if let Some(path) = log_file_path() {
+            if let Ok(content) = serde_json::to_string(&self.log_entries) {
+                let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
+                let _ = std::fs::write(&path, content);
+            }
+        }
+    }
+
+    pub fn load_logs(&mut self) {
+        if let Some(path) = log_file_path() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(entries) = serde_json::from_str::<Vec<LogEntry>>(&content) {
+                    self.log_entries = entries.into();
+                }
+            }
+        }
+    }
+
+    pub fn save_terminal(&self) {
+        if let Some(path) = terminal_file_path() {
+            if let Ok(content) = serde_json::to_string(&self.terminal_buffer) {
+                let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
+                let _ = std::fs::write(&path, content);
+            }
+        }
+    }
+
+    pub fn load_terminal(&mut self) {
+        if let Some(path) = terminal_file_path() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(entries) = serde_json::from_str::<VecDeque<TerminalLine>>(&content) {
+                    self.terminal_buffer = entries;
+                }
+            }
+        }
+    }
+
+    pub fn show_error(&mut self, msg: &str) {
+        self.global_error = Some(msg.to_string());
+        self.global_error_time = chrono::Utc::now().timestamp_millis();
+        self.add_log_entry(LogLevel::Error, msg);
+        self.add_warning_entry(msg);
+    }
+
+    pub fn show_warning(&mut self, msg: &str) {
+        self.global_error = Some(msg.to_string());
+        self.global_error_time = chrono::Utc::now().timestamp_millis();
+        self.add_log_entry(LogLevel::Warning, msg);
+        self.add_warning_entry(msg);
+    }
+
+    fn add_warning_entry(&mut self, msg: &str) {
+        self.warning_history.push_back(WarningEntry {
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            message: msg.to_string(),
+        });
+        if self.warning_history.len() > 200 {
+            self.warning_history.pop_front();
+        }
+        self.save_warnings();
+    }
+
+    pub fn clear_error_if_expired(&mut self) {
+        if self.global_error.is_some() {
+            let now = chrono::Utc::now().timestamp_millis();
+            if now - self.global_error_time > 5000 {
+                self.global_error = None;
+            }
+        }
+    }
+
+    pub fn save_warnings(&self) {
+        if let Some(path) = warning_file_path() {
+            if let Ok(content) = serde_json::to_string(&self.warning_history) {
+                let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
+                let _ = std::fs::write(&path, content);
+            }
+        }
+    }
+
+    pub fn load_warnings(&mut self) {
+        if let Some(path) = warning_file_path() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(entries) = serde_json::from_str::<VecDeque<WarningEntry>>(&content) {
+                    self.warning_history = entries;
+                }
+            }
+        }
     }
 
     pub fn add_chart_data(&mut self, value: f64) {
@@ -987,4 +1333,19 @@ impl AppState {
             self.chart_data.remove(0);
         }
     }
+}
+
+fn log_file_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
+    Some(std::path::PathBuf::from(home).join(".serialrun").join("logs.json"))
+}
+
+fn terminal_file_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
+    Some(std::path::PathBuf::from(home).join(".serialrun").join("terminal.json"))
+}
+
+fn warning_file_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
+    Some(std::path::PathBuf::from(home).join(".serialrun").join("warnings.json"))
 }

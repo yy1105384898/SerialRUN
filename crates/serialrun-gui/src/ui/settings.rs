@@ -1,4 +1,5 @@
-use crate::state::{AppState, T};
+use crate::state::{AppState, Language, T};
+use crate::theme;
 use eframe::egui;
 use serialrun_core::config::{DataBits, FlowControl, Parity, StopBits};
 
@@ -10,6 +11,7 @@ pub fn render_settings_panel(ui: &mut egui::Ui, state: &mut AppState, _ctx: &egu
     // Serial config section
     ui.collapsing(T::serial_config(lang), |ui| {
         egui::Grid::new("settings_grid").show(ui, |ui| {
+            let mut changed = false;
             ui.label(T::data_bits(lang));
             let db_text = match state.config.data_bits { DataBits::Five=>"5", DataBits::Six=>"6", DataBits::Seven=>"7", DataBits::Eight=>"8" };
             egui::ComboBox::from_id_salt("data_bits")
@@ -58,6 +60,8 @@ pub fn render_settings_panel(ui: &mut egui::Ui, state: &mut AppState, _ctx: &egu
                 });
             ui.end_row();
         });
+        // Save serial config when changed
+        crate::app::save_prefs_from_state(state);
     });
 
     ui.separator();
@@ -89,8 +93,10 @@ pub fn render_settings_panel(ui: &mut egui::Ui, state: &mut AppState, _ctx: &egu
 
     ui.separator();
 
-    // MCP Server settings
-    ui.collapsing(T::mcp_server(lang), |ui| {
+    // MCP Server settings — always expanded
+    ui.label(egui::RichText::new(T::mcp_server(lang)).strong());
+    ui.add_space(2.0);
+    {
         ui.horizontal(|ui| {
             if ui.checkbox(&mut state.mcp_enabled, T::mcp_enable(lang)).changed() {
                 if let Some(ref cmd_tx) = state.mcp_cmd_tx {
@@ -131,46 +137,179 @@ pub fn render_settings_panel(ui: &mut egui::Ui, state: &mut AppState, _ctx: &egu
             ui.end_row();
 
             ui.label(T::mcp_status(lang));
-            let status_color = if state.mcp_running { egui::Color32::GREEN } else { egui::Color32::GRAY };
+            let c = theme::get_colors(state.theme);
+            let status_color = if state.mcp_running { c.logo_green } else { c.text_muted };
             ui.label(egui::RichText::new(if state.mcp_running { T::mcp_running(lang) } else { T::mcp_stopped(lang) }).color(status_color));
             ui.end_row();
         });
 
         if state.mcp_bind_lan {
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(T::mcp_warning(lang)).color(egui::Color32::from_rgb(220, 180, 50)).small());
+            let c = theme::get_colors(state.theme);
+            ui.label(egui::RichText::new(T::mcp_warning(lang)).color(c.warning).strong().size(13.0));
         }
 
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             let addr = if state.mcp_bind_lan { "0.0.0.0" } else { "127.0.0.1" };
-            ui.label(egui::RichText::new(format!("Bind: {}:{}", addr, state.mcp_port)).monospace().small());
+            ui.label(egui::RichText::new(format!("Bind: {}:{}", addr, state.mcp_port)).monospace().size(13.0));
         });
         if state.mcp_bind_lan {
             if let Some(local_ip) = get_local_ip() {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("LAN: {}:{}", local_ip, state.mcp_port)).monospace().small().color(egui::Color32::from_rgb(100, 200, 255)));
+                    ui.label(egui::RichText::new(format!("LAN: {}:{}", local_ip, state.mcp_port)).monospace().size(13.0).color(egui::Color32::from_rgb(80, 160, 230)).strong());
                 });
+            }
+        }
+
+        // Access log display
+        if !state.mcp_access_log.is_empty() {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(if lang == Language::Chinese { "访问日志" } else { "Access Log" }).strong().size(12.0));
+            egui::ScrollArea::vertical().max_height(120.0).stick_to_bottom(true).show(ui, |ui| {
+                for entry in state.mcp_access_log.iter().rev().take(20) {
+                    let ts = entry.timestamp.chars().skip(11).take(12).collect::<String>();
+                    let color = match entry.action.as_str() {
+                        "CONNECT" => egui::Color32::from_rgb(0, 180, 0),
+                        "DISCONNECT" => egui::Color32::from_rgb(180, 60, 60),
+                        "CALL" => egui::Color32::from_rgb(80, 160, 230),
+                        _ => egui::Color32::GRAY,
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(format!("[{}]", ts)).monospace().small().weak());
+                        ui.label(egui::RichText::new(&entry.client_ip).monospace().small().strong());
+                        ui.label(egui::RichText::new(&entry.action).color(color).small().strong());
+                        ui.label(egui::RichText::new(&entry.detail).small().weak());
+                    });
+                }
+            });
+        }
+    }
+
+    ui.separator();
+
+    // Recording & Replay
+    ui.label(egui::RichText::new(if lang == Language::Chinese { "录制 / 回放" } else { "Record / Replay" }).strong());
+    ui.add_space(4.0);
+
+    ui.horizontal(|ui| {
+        if state.recording {
+            ui.label(egui::RichText::new(format!("● {}", T::recording(lang))).color(egui::Color32::from_rgb(220, 60, 60)));
+            if ui.button(T::stop_recording(lang)).clicked() {
+                state.recording = false;
+                state.recording_last_time = 0;
+                state.add_log_entry(crate::state::LogLevel::Info, &format!("Recording stopped. {} commands recorded.", state.script_commands.len()));
+            }
+        } else {
+            if ui.button(T::start_recording(lang)).clicked() {
+                state.recording = true;
+                state.recording_last_time = chrono::Utc::now().timestamp_millis();
+                state.script_commands.clear();
+                state.add_log_entry(crate::state::LogLevel::Info, "Recording started");
             }
         }
     });
 
-    ui.separator();
+    // Script info
+    if !state.script_commands.is_empty() && !state.recording {
+        let send_count = state.script_commands.iter().filter(|c| c.action == crate::state::ScriptAction::Send).count();
+        ui.label(egui::RichText::new(format!("{}: {} {}", if lang == Language::Chinese { "已录制" } else { "Recorded" }, send_count, if lang == Language::Chinese { "条命令" } else { "commands" })).weak().small());
+    }
 
-    // Recording
-    if state.recording {
-        ui.label(egui::RichText::new(format!("● {}", T::recording(lang))).color(egui::Color32::from_rgb(220, 60, 60)));
-        if ui.button(T::stop_recording(lang)).clicked() {
-            state.recording = false;
-            state.add_log_entry(crate::state::LogLevel::Info, "Recording stopped");
+    // Save / Load / Replay buttons
+    ui.horizontal(|ui| {
+        let can_save = !state.script_commands.is_empty() && !state.recording;
+        let can_load = !state.recording && !state.replay_running;
+        let can_replay = !state.script_commands.is_empty() && !state.recording && !state.replay_running && state.is_connected;
+        let can_stop_replay = state.replay_running;
+
+        if ui.add_enabled(can_save, egui::Button::new(T::save_btn(lang))).clicked() {
+            save_script(state);
         }
-    } else {
-        if ui.button(T::start_recording(lang)).clicked() {
-            state.recording = true;
-            state.script_commands.clear();
-            state.add_log_entry(crate::state::LogLevel::Info, "Recording started");
+        if ui.add_enabled(can_load, egui::Button::new(T::import_btn(lang))).clicked() {
+            load_script(state);
+        }
+        ui.separator();
+        if ui.add_enabled(can_replay, egui::Button::new(
+            egui::RichText::new(format!("▶ {}", if lang == Language::Chinese { "回放" } else { "Replay" })).color(egui::Color32::WHITE).strong()
+        ).fill(egui::Color32::from_rgb(40, 160, 80))).clicked() {
+            start_replay(state);
+        }
+        if ui.add_enabled(can_stop_replay, egui::Button::new(
+            egui::RichText::new(format!("■ {}", if lang == Language::Chinese { "停止" } else { "Stop" })).color(egui::Color32::WHITE).strong()
+        ).fill(egui::Color32::from_rgb(200, 60, 60))).clicked() {
+            stop_replay(state);
+        }
+    });
+
+    // Replay progress
+    if state.replay_running {
+        let total = state.replay_commands.len();
+        let done = state.replay_index;
+        let pct = if total > 0 { done as f32 / total as f32 } else { 0.0 };
+        ui.add(egui::ProgressBar::new(pct).text(format!("{}/{}", done, total)));
+    }
+}
+
+fn save_script(state: &mut AppState) {
+    if let Some(path) = rfd::FileDialog::new()
+        .add_filter("Script", &["txt", "srs"])
+        .add_filter("All", &["*"])
+        .save_file()
+    {
+        let mut content = String::from("# SerialRUN Script\n");
+        for cmd in &state.script_commands {
+            content.push_str(&format!("{}\n", cmd.to_text_line()));
+        }
+        match std::fs::write(&path, content) {
+            Ok(()) => {
+                state.add_log_entry(crate::state::LogLevel::Info, &format!("Script saved: {} ({} commands)", path.display(), state.script_commands.len()));
+            }
+            Err(e) => {
+                state.show_error(&format!("Save failed: {}", e));
+            }
         }
     }
+}
+
+fn load_script(state: &mut AppState) {
+    if let Some(path) = rfd::FileDialog::new()
+        .add_filter("Script", &["txt", "srs"])
+        .add_filter("All", &["*"])
+        .pick_file()
+    {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                let commands: Vec<crate::state::ScriptCommand> = content.lines()
+                    .filter_map(crate::state::ScriptCommand::from_text_line)
+                    .collect();
+                let count = commands.iter().filter(|c| c.action == crate::state::ScriptAction::Send).count();
+                state.script_commands = commands;
+                state.add_log_entry(crate::state::LogLevel::Info, &format!("Script loaded: {} ({} commands)", path.display(), count));
+            }
+            Err(e) => {
+                state.show_error(&format!("Load failed: {}", e));
+            }
+        }
+    }
+}
+
+fn start_replay(state: &mut AppState) {
+    if state.script_commands.is_empty() || !state.is_connected {
+        return;
+    }
+    state.replay_commands = state.script_commands.clone();
+    state.replay_index = 0;
+    state.replay_start_time = chrono::Utc::now().timestamp_millis();
+    state.replay_running = true;
+    state.add_log_entry(crate::state::LogLevel::Info, &format!("Replay started ({} commands)", state.replay_commands.len()));
+}
+
+fn stop_replay(state: &mut AppState) {
+    state.replay_running = false;
+    state.replay_index = 0;
+    state.replay_commands.clear();
+    state.add_log_entry(crate::state::LogLevel::Info, "Replay stopped");
 }
 
 fn get_local_ip() -> Option<String> {

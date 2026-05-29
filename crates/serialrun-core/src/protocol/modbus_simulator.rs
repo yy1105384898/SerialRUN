@@ -242,8 +242,8 @@ fn handle_tcp_client_sim(
         }).ok();
 
         // Process request
-        let state = registers.lock().unwrap();
-        let response_data = process_request(&tcp_frame, &state);
+        let mut state = registers.lock().unwrap();
+        let response_data = process_request(&tcp_frame, &mut state);
         drop(state);
 
         // Build response
@@ -309,9 +309,9 @@ fn run_rtu_slave(
 
                 match ModbusFrame::parse(data) {
                     Ok(rtu_frame) => {
-                        let state = registers.lock().unwrap();
+                        let mut state = registers.lock().unwrap();
                         let tcp_frame = ModbusTcpFrame::from_rtu_frame(&rtu_frame, 0);
-                        let response_data = process_request(&tcp_frame, &state);
+                        let response_data = process_request(&tcp_frame, &mut state);
                         drop(state);
 
                         let resp_function = if response_data.is_err() {
@@ -357,7 +357,7 @@ fn run_rtu_slave(
     let _ = port.disconnect();
 }
 
-fn process_request(frame: &ModbusTcpFrame, state: &SimulatorState) -> Result<Vec<u8>, u8> {
+fn process_request(frame: &ModbusTcpFrame, state: &mut SimulatorState) -> Result<Vec<u8>, u8> {
     if frame.unit_id != state.slave_id && state.slave_id != 0 {
         return Err(0x06); // Slave device failure
     }
@@ -431,23 +431,43 @@ fn process_request(frame: &ModbusTcpFrame, state: &SimulatorState) -> Result<Vec
             if frame.data.len() < 4 { return Err(0x02); }
             let addr = u16::from_be_bytes([frame.data[0], frame.data[1]]);
             let val = u16::from_be_bytes([frame.data[2], frame.data[3]]);
-            // Echo back request
+            state.holding.insert(addr, val);
             Ok(frame.data[0..4].to_vec())
         }
         ModbusFunction::WriteSingleCoil => {
             if frame.data.len() < 4 { return Err(0x02); }
+            let addr = u16::from_be_bytes([frame.data[0], frame.data[1]]);
+            let val = u16::from_be_bytes([frame.data[2], frame.data[3]]);
+            state.coils.insert(addr, val != 0);
             Ok(frame.data[0..4].to_vec())
         }
         ModbusFunction::WriteMultipleRegisters => {
             if frame.data.len() < 5 { return Err(0x02); }
             let start = u16::from_be_bytes([frame.data[0], frame.data[1]]);
-            let count = u16::from_be_bytes([frame.data[2], frame.data[3]]);
+            let count = u16::from_be_bytes([frame.data[2], frame.data[3]]) as usize;
+            let byte_count = frame.data[4] as usize;
+            for i in 0..count {
+                let offset = 5 + i * 2;
+                if offset + 1 < frame.data.len() {
+                    let val = u16::from_be_bytes([frame.data[offset], frame.data[offset + 1]]);
+                    state.holding.insert(start + i as u16, val);
+                }
+            }
             Ok(vec![frame.data[0], frame.data[1], count.to_be_bytes()[0], count.to_be_bytes()[1]])
         }
         ModbusFunction::WriteMultipleCoils => {
             if frame.data.len() < 5 { return Err(0x02); }
             let start = u16::from_be_bytes([frame.data[0], frame.data[1]]);
-            let count = u16::from_be_bytes([frame.data[2], frame.data[3]]);
+            let count = u16::from_be_bytes([frame.data[2], frame.data[3]]) as usize;
+            let byte_count = frame.data[4] as usize;
+            for i in 0..count {
+                let byte_idx = 5 + i / 8;
+                let bit_idx = i % 8;
+                if byte_idx < frame.data.len() {
+                    let val = (frame.data[byte_idx] >> bit_idx) & 1 == 1;
+                    state.coils.insert(start + i as u16, val);
+                }
+            }
             Ok(vec![frame.data[0], frame.data[1], count.to_be_bytes()[0], count.to_be_bytes()[1]])
         }
         _ => Err(0x01), // Illegal function

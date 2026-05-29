@@ -5,7 +5,9 @@ mod async_utils;
 mod icon;
 mod mcp_server;
 mod plc_presets;
+mod port_owner;
 mod state;
+pub mod theme;
 mod ui;
 
 use eframe::egui;

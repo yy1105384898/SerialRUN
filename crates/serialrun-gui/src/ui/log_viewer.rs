@@ -1,14 +1,15 @@
 use crate::state::{AppState, LogLevel, T};
+use crate::theme;
 use eframe::egui;
 
 pub fn render_log_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
-    let is_dark = state.theme == crate::state::Theme::Dark;
+    let c = theme::get_colors(state.theme);
 
     ui.horizontal(|ui| {
-        ui.label(T::log_viewer(lang));
+        ui.label(egui::RichText::new(T::log_viewer(lang)).strong().color(c.text_primary));
         ui.separator();
-        ui.label(format!("Entries: {}", state.log_entries.len()));
+        ui.label(egui::RichText::new(format!("Entries: {}", state.log_entries.len())).color(c.text_muted));
     });
 
     ui.separator();
@@ -21,26 +22,20 @@ pub fn render_log_panel(ui: &mut egui::Ui, state: &mut AppState) {
         .max_height(available_height)
         .show(ui, |ui| {
             for entry in &state.log_entries {
-                let color = match entry.level {
-                    LogLevel::Info => if is_dark { egui::Color32::WHITE } else { egui::Color32::BLACK },
-                    LogLevel::Warning => egui::Color32::YELLOW,
-                    LogLevel::Error => egui::Color32::RED,
-                };
-
-                let level_str = match entry.level {
-                    LogLevel::Info => "INFO",
-                    LogLevel::Warning => "WARN",
-                    LogLevel::Error => "ERR ",
+                let (color, level_str) = match entry.level {
+                    LogLevel::Info => (c.log_info, "INFO"),
+                    LogLevel::Warning => (c.log_warning, "WARN"),
+                    LogLevel::Error => (c.log_error, "ERR "),
                 };
 
                 let timestamp = chrono::DateTime::from_timestamp_millis(entry.timestamp)
-                    .map(|t| t.with_timezone(&chrono::Local).format("%H:%M:%S%.3f").to_string())
+                    .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S%.3f").to_string())
                     .unwrap_or_default();
 
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("[{}]", timestamp)).weak());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(format!("[{}]", timestamp)).color(c.timestamp_color).monospace());
                     ui.label(egui::RichText::new(level_str).color(color).strong());
-                    ui.label(&entry.message);
+                    ui.label(egui::RichText::new(&entry.message).color(c.text_primary));
                 });
             }
         });

@@ -10,7 +10,8 @@ pub fn render_frame_builder_panel(ui: &mut egui::Ui, state: &mut AppState) {
         if let Ok(result) = rx.try_recv() {
             state.fb_write_async = None;
             if let Err(e) = result {
-                state.add_log_entry(crate::state::LogLevel::Error, &format!("Frame send error: {}", e));
+                state.frame_builder_error = Some(format!("Frame send: {}", e));
+                state.show_error(&format!("Frame send: {}", e));
             }
         }
     }
@@ -27,24 +28,24 @@ pub fn render_frame_builder_panel(ui: &mut egui::Ui, state: &mut AppState) {
     });
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        if ui.button("Build").clicked() {
+        if ui.button(T::build_btn(lang)).clicked() {
             state.frame_builder_error = None;
-            let addr: u16 = match state.frame_builder_addr.parse() { Ok(v) => v, Err(_) => { state.frame_builder_error = Some("Invalid address".into()); return; } };
+            let addr: u16 = match state.frame_builder_addr.parse() { Ok(v) => v, Err(_) => { let m = "Invalid address".to_string(); state.frame_builder_error = Some(m.clone()); state.show_error(&m); return; } };
             let fc = state.frame_builder_fc;
             let frame = if fc.is_read() {
-                let qty: u16 = match state.frame_builder_value.parse() { Ok(v) => v, Err(_) => { state.frame_builder_error = Some("Invalid quantity".into()); return; } };
+                let qty: u16 = match state.frame_builder_value.parse() { Ok(v) => v, Err(_) => { let m = "Invalid quantity".to_string(); state.frame_builder_error = Some(m.clone()); state.show_error(&m); return; } };
                 ModbusParser::build_read_request(state.frame_builder_slave_id, fc.to_core_function(), addr, qty)
             } else {
-                let val: u16 = match state.frame_builder_value.parse() { Ok(v) => v, Err(_) => { state.frame_builder_error = Some("Invalid value".into()); return; } };
+                let val: u16 = match state.frame_builder_value.parse() { Ok(v) => v, Err(_) => { let m = "Invalid value".to_string(); state.frame_builder_error = Some(m.clone()); state.show_error(&m); return; } };
                 ModbusParser::build_write_single(state.frame_builder_slave_id, addr, val)
             };
             state.frame_builder_hex = frame.to_bytes().iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
         }
-        if ui.button("Send").clicked() && !state.frame_builder_hex.is_empty() && state.is_connected && state.fb_write_async.is_none() {
+        if ui.button(T::send(lang)).clicked() && !state.frame_builder_hex.is_empty() && state.is_connected && state.fb_write_async.is_none() {
             if let Some(bytes) = parse_hex(&state.frame_builder_hex) {
-                let port_name = state.selected_port.clone().unwrap_or_default();
-                let baud_rate = state.config.baud_rate;
-                state.fb_write_async = Some(crate::async_utils::spawn_serial_write(port_name, baud_rate, bytes));
+                if let Some(ref po) = state.port_owner {
+                    po.send(crate::port_owner::PortCommand::Write(bytes));
+                }
             }
         }
     });

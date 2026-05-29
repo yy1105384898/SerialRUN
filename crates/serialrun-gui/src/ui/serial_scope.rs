@@ -8,12 +8,8 @@ pub fn render_serial_scope_panel(ui: &mut egui::Ui, state: &mut AppState) {
     // Poll persistent reader
     if let Some(ref reader) = state.scope_reader {
         while let Some(points) = reader.poll() {
-            let t0 = state.scope_data.first().map(|p| p.time_ms).unwrap_or(0.0);
             for p in points {
-                state.scope_data.push(ScopeDataPoint {
-                    time_ms: if t0 == 0.0 { p.time_ms } else { p.time_ms },
-                    value: p.value,
-                });
+                state.scope_data.push(p);
             }
             let max_points = 10000;
             if state.scope_data.len() > max_points {
@@ -41,7 +37,7 @@ pub fn render_serial_scope_panel(ui: &mut egui::Ui, state: &mut AppState) {
         ui.add_space(4.0);
 
         ui.horizontal(|ui| {
-            ui.label("Timebase (ms):");
+            ui.label(T::timebase(lang));
             ui.add(egui::DragValue::new(&mut state.scope_timebase_ms).range(1.0..=5000.0).speed(10.0));
         });
         ui.add_space(4.0);
@@ -104,6 +100,10 @@ fn start_scope_reader(state: &mut AppState) {
     if state.scope_reader.is_some() { return; }
     let port_name = state.selected_port.clone().unwrap_or_default();
     let baud_rate = state.config.baud_rate;
+    // Stop port_owner and wait for port release before opening exclusive access
+    if let Some(po) = state.port_owner.take() {
+        po.wait_for_release();
+    }
     let reader = PersistentReader::start(move |stop, tx| {
         let config = serialrun_core::config::SerialConfig {
             port_name,
@@ -112,6 +112,8 @@ fn start_scope_reader(state: &mut AppState) {
         };
         let mut port = serialrun_core::SerialPort::new(config);
         if port.connect().is_err() { return; }
+        // Set short timeout so read returns periodically, allowing stop flag check
+        let _ = port.set_timeout(std::time::Duration::from_millis(50));
         let mut buf = [0u8; 1024];
         while !stop.load(std::sync::atomic::Ordering::Relaxed) {
             match port.read(&mut buf) {
@@ -135,5 +137,16 @@ fn start_scope_reader(state: &mut AppState) {
 fn stop_scope_reader(state: &mut AppState) {
     if let Some(mut reader) = state.scope_reader.take() {
         reader.stop();
+    }
+    state.scope_write_tx = None;
+    // Restart port_owner for normal terminal operation
+    if state.port_owner.is_none() && state.is_connected {
+        if let Some(ref pn) = state.selected_port {
+            let mut config = state.config.clone();
+            config.port_name = pn.clone();
+            let po = crate::port_owner::PortOwnerHandle::start();
+            po.send(crate::port_owner::PortCommand::Open(config));
+            state.port_owner = Some(po);
+        }
     }
 }

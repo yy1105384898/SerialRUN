@@ -6,7 +6,7 @@ use std::io::Write;
 pub fn render_data_logger_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
     ui.horizontal(|ui| {
-        ui.label("Log:");
+        ui.label(T::log_label(lang));
         if ui.button("...").clicked() {
             if let Some(path) = rfd::FileDialog::new().add_filter("CSV", &["csv"]).save_file() {
                 state.data_logger_path = path.display().to_string();

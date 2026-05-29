@@ -11,7 +11,7 @@ pub fn render_can_analyzer_panel(ui: &mut egui::Ui, state: &mut AppState) {
         if let Ok(result) = rx.try_recv() {
             state.can_tx_async = None;
             if let Err(e) = result {
-                state.add_log_entry(crate::state::LogLevel::Error, &format!("CAN TX error: {}", e));
+                state.show_error(&format!("CAN TX: {}", e));
             }
         }
     }
@@ -28,7 +28,7 @@ pub fn render_can_analyzer_panel(ui: &mut egui::Ui, state: &mut AppState) {
 
     // ── Header ──
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("CAN Bus Analyzer").strong().size(14.0));
+        ui.label(egui::RichText::new(T::can_analyzer(lang)).strong().size(14.0));
         ui.separator();
         let label = if state.can_capturing { T::stop_monitor(lang) } else { T::start_monitor(lang) };
         if ui.button(label).clicked() {
@@ -47,7 +47,7 @@ pub fn render_can_analyzer_panel(ui: &mut egui::Ui, state: &mut AppState) {
             state.can_frames.clear();
             state.can_stats = crate::state::CanStats::default();
         }
-        if ui.button("Export").clicked() {
+        if ui.button(T::export_btn(lang)).clicked() {
             export_can_frames(state);
         }
     });
@@ -56,28 +56,28 @@ pub fn render_can_analyzer_panel(ui: &mut egui::Ui, state: &mut AppState) {
     // ── Stats Bar ──
     let stats = compute_stats(&state.can_frames);
     ui.horizontal(|ui| {
-        ui.label(format!("Frames: {}", state.can_frames.len()));
+        ui.label(format!("{}: {}", T::frames_label(lang), state.can_frames.len()));
         ui.separator();
-        ui.label(format!("Errors: {}", stats.error_count));
+        ui.label(format!("{}: {}", T::errors(lang), stats.error_count));
         ui.separator();
-        ui.label(format!("IDs: {}", stats.unique_ids));
+        ui.label(format!("{}: {}", T::id_count(lang), stats.unique_ids));
         ui.separator();
-        ui.label(format!("Bus Load: {:.1}%", stats.bus_load));
+        ui.label(format!("{}: {:.1}%", T::bus_load(lang), stats.bus_load));
         ui.separator();
-        ui.label(format!("Max ID: {:X}", stats.max_id));
+        ui.label(format!("{}: {:X}", T::max_id(lang), stats.max_id));
     });
     ui.add_space(2.0);
 
     // ── Filter & Transmit ──
     ui.horizontal(|ui| {
-        ui.label("Filter:");
+        ui.label(T::filter_label(lang));
         ui.add(egui::TextEdit::singleline(&mut state.can_filter_id).desired_width(80.0));
         ui.separator();
-        ui.label("TX ID:");
+        ui.label(T::tx_id(lang));
         ui.add(egui::TextEdit::singleline(&mut state.can_tx_id).desired_width(70.0));
-        ui.label("Data:");
+        ui.label(T::data_label(lang));
         ui.add(egui::TextEdit::singleline(&mut state.can_tx_data).desired_width(120.0));
-        if ui.button("Send").clicked() && state.is_connected {
+        if ui.button(T::send(lang)).clicked() && state.is_connected {
             can_transmit(state);
         }
     });
@@ -85,10 +85,10 @@ pub fn render_can_analyzer_panel(ui: &mut egui::Ui, state: &mut AppState) {
 
     // ── Tabs: Frames / Statistics ──
     egui::ComboBox::from_id_salt("can_tab").width(100.0)
-        .selected_text(if state.can_show_stats { "Statistics" } else { "Frames" })
+        .selected_text(if state.can_show_stats { T::statistics(lang) } else { T::frames_label(lang) })
         .show_ui(ui, |ui| {
-            ui.selectable_value(&mut state.can_show_stats, false, "Frames");
-            ui.selectable_value(&mut state.can_show_stats, true, "Statistics");
+            ui.selectable_value(&mut state.can_show_stats, false, T::frames_label(lang));
+            ui.selectable_value(&mut state.can_show_stats, true, T::statistics(lang));
         });
     ui.add_space(2.0);
 
@@ -103,6 +103,12 @@ fn start_can_reader(state: &mut AppState) {
     if state.can_reader.is_some() { return; }
     let port_name = state.selected_port.clone().unwrap_or_default();
     let baud_rate = state.config.baud_rate;
+    // Stop port_owner and wait for port release before opening exclusive access
+    if let Some(po) = state.port_owner.take() {
+        po.wait_for_release();
+    }
+    let (write_tx, write_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    state.can_write_tx = Some(write_tx);
     let reader = PersistentReader::start(move |stop, tx| {
         let config = serialrun_core::config::SerialConfig {
             port_name,
@@ -111,9 +117,15 @@ fn start_can_reader(state: &mut AppState) {
         };
         let mut port = serialrun_core::SerialPort::new(config);
         if port.connect().is_err() { return; }
+        // Set short timeout so read returns periodically, allowing stop flag check
+        let _ = port.set_timeout(std::time::Duration::from_millis(50));
         let mut line_buf = String::new();
         let mut buf = [0u8; 1024];
         while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            // Check for pending writes
+            while let Ok(data) = write_rx.try_recv() {
+                let _ = port.write(&data);
+            }
             match port.read(&mut buf) {
                 Ok(n) if n > 0 => {
                     let text = String::from_utf8_lossy(&buf[..n]);
@@ -143,6 +155,17 @@ fn start_can_reader(state: &mut AppState) {
 fn stop_can_reader(state: &mut AppState) {
     if let Some(mut reader) = state.can_reader.take() {
         reader.stop();
+    }
+    state.can_write_tx = None;
+    // Restart port_owner for normal terminal operation
+    if state.port_owner.is_none() && state.is_connected {
+        if let Some(ref pn) = state.selected_port {
+            let mut config = state.config.clone();
+            config.port_name = pn.clone();
+            let po = crate::port_owner::PortOwnerHandle::start();
+            po.send(crate::port_owner::PortCommand::Open(config));
+            state.port_owner = Some(po);
+        }
     }
 }
 
@@ -297,14 +320,14 @@ fn get_id_color(id: u32) -> egui::Color32 {
 fn can_transmit(state: &mut AppState) {
     let id: u32 = match parse_hex_id(&state.can_tx_id) {
         Some(v) => v,
-        None => { state.add_log_entry(crate::state::LogLevel::Error, "CAN TX: invalid ID"); return; }
+        None => { state.show_error("CAN TX: invalid ID"); return; }
     };
     let data = match parse_hex_data(&state.can_tx_data) {
         Some(d) => d,
-        None => { state.add_log_entry(crate::state::LogLevel::Error, "CAN TX: invalid data"); return; }
+        None => { state.show_error("CAN TX: invalid data"); return; }
     };
     if data.len() > 8 {
-        state.add_log_entry(crate::state::LogLevel::Error, "CAN TX: data too long (max 8 bytes)");
+        state.show_error("CAN TX: data too long (max 8 bytes)");
         return;
     }
     let is_ext = id > 0x7FF;
@@ -313,10 +336,10 @@ fn can_transmit(state: &mut AppState) {
     } else {
         format!("t{:03X}{}\r", id, data.iter().map(|b| format!("{:02X}", b)).collect::<String>())
     };
-    let port_name = state.selected_port.clone().unwrap_or_default();
-    let baud_rate = state.config.baud_rate;
     let tx_data = cmd.into_bytes();
-    state.can_tx_async = Some(crate::async_utils::spawn_serial_write(port_name, baud_rate, tx_data));
+    if let Some(ref write_tx) = state.can_write_tx {
+        let _ = write_tx.send(tx_data);
+    }
     // Log as TX immediately (optimistic)
     state.can_frames.push(CanFrameData {
         timestamp: chrono::Utc::now().timestamp_millis(),

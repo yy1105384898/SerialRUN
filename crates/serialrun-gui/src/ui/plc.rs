@@ -33,12 +33,12 @@ pub fn render_plc_panel(ui: &mut egui::Ui, state: &mut AppState) {
 
         ui.separator();
 
-        let read_label = if state.plc.polling { "\u{25A0} Stop" } else { "\u{25B6} Poll" };
+        let read_label = if state.plc.polling { format!("\u{25A0} {}", T::stop_btn(lang)) } else { format!("\u{25B6} {}", T::poll_btn(lang)) };
         if ui.button(egui::RichText::new(read_label).strong()).clicked() && state.is_connected {
             state.plc.polling = !state.plc.polling;
             if state.plc.polling { state.plc.last_poll_time = 0; }
         }
-        if ui.button("\u{21BB} Once").clicked() && state.is_connected {
+        if ui.button(format!("\u{21BB} {}", T::once_btn(lang))).clicked() && state.is_connected {
             do_read_all(state);
         }
     });
@@ -105,7 +105,7 @@ pub fn render_plc_panel(ui: &mut egui::Ui, state: &mut AppState) {
                                         _ => "value",
                                     };
                                     ui.add(egui::TextEdit::singleline(&mut state.plc.write_value).desired_width(80.0).hint_text(hint));
-                                    if ui.small_button("W").clicked() && state.is_connected {
+                                    if ui.small_button("W").on_hover_text(T::write_btn(lang)).clicked() && state.is_connected {
                                         do_write_register(state);
                                     }
                                 }
@@ -268,8 +268,7 @@ fn do_read_all(state: &mut AppState) {
     if regs.is_empty() { return; }
 
     let slave_id = state.plc.slave_id;
-    let port_name = state.selected_port.clone().unwrap_or_default();
-    let baud_rate = state.config.baud_rate;
+    let po = state.port_owner.as_ref().map(|p| p.cmd_tx());
 
     // Build batched read requests: group contiguous registers
     let batches = build_read_batches(&regs);
@@ -278,16 +277,10 @@ fn do_read_all(state: &mut AppState) {
     state.plc_async_receiver = Some(rx);
 
     std::thread::spawn(move || {
-        let config = serialrun_core::config::SerialConfig {
-            port_name,
-            baud_rate,
-            ..Default::default()
+        let po = match po {
+            Some(p) => p,
+            None => { let _ = tx.send(Err("Not connected".into())); return; }
         };
-        let mut port = serialrun_core::SerialPort::new(config);
-        if port.connect().is_err() {
-            let _ = tx.send(Err("Connect failed".into()));
-            return;
-        }
 
         let mut all_results: Vec<(u16, Result<Vec<u8>, String>)> = Vec::new();
 
@@ -299,26 +292,19 @@ fn do_read_all(state: &mut AppState) {
                 batch.quantity,
             );
             let req = frame.to_bytes();
-            if port.write(&req).is_err() {
-                for reg in &batch.regs {
-                    all_results.push((reg.addr, Err("Write failed".into())));
-                }
-                continue;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            let mut buf = [0u8; 512];
-            match port.read(&mut buf) {
-                Ok(n) if n >= 4 => {
-                    // Parse the batch response and split into individual register results
-                    if let Ok(f) = ModbusFrame::parse(&buf[..n]) {
+            let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+            let _ = po.send(crate::port_owner::PortCommand::WriteRead { data: req, timeout_ms: 100, resp_tx });
+            let result = resp_rx.recv().unwrap_or_else(|e| Err(format!("Channel closed: {}", e)));
+            match result {
+                Ok(resp) if resp.len() >= 4 => {
+                    if let Ok(f) = ModbusFrame::parse(&resp) {
                         for reg in &batch.regs {
                             let offset = (reg.addr - batch.start_addr) as usize;
                             let bytes_per_reg = 2;
-                            let byte_offset = 1 + offset * bytes_per_reg; // +1 for function code in data
-                            let slice: Vec<u8> = std::iter::once(f.data[0]) // byte count
+                            let byte_offset = 1 + offset * bytes_per_reg;
+                            let slice: Vec<u8> = std::iter::once(f.data[0])
                                 .chain(f.data[byte_offset..].iter().copied())
                                 .collect();
-                            // For U32/Float32, we need 4 bytes + the byte count prefix
                             let needed = match reg.data_type {
                                 PlcDataType::U32 | PlcDataType::Float32 => {
                                     let end = (byte_offset + 4).min(f.data.len());
@@ -344,7 +330,6 @@ fn do_read_all(state: &mut AppState) {
             }
         }
 
-        let _ = port.disconnect();
         let _ = tx.send(Ok(all_results));
     });
 }
@@ -453,9 +438,9 @@ fn do_write_register(state: &mut AppState) {
         }
     };
 
-    let port_name = state.selected_port.clone().unwrap_or_default();
-    let baud_rate = state.config.baud_rate;
-    state.plc_write_async = Some(crate::async_utils::spawn_serial_write(port_name, baud_rate, frame_bytes));
+    if let Some(ref po) = state.port_owner {
+        po.send(crate::port_owner::PortCommand::Write(frame_bytes));
+    }
     plc_log(state, &format!("W {} (0x{:04X})", reg.name, reg.addr));
 }
 
@@ -467,8 +452,8 @@ fn write_coil(state: &mut AppState, reg: &PlcRegisterDef, on: bool) {
         vec![(reg.addr >> 8) as u8, reg.addr as u8, 0x00, 0x00]
     };
     let frame = ModbusFrame::new(state.plc.slave_id, serialrun_core::protocol::ModbusFunction::WriteSingleCoil, data);
-    let port_name = state.selected_port.clone().unwrap_or_default();
-    let baud_rate = state.config.baud_rate;
-    state.plc_write_async = Some(crate::async_utils::spawn_serial_write(port_name, baud_rate, frame.to_bytes()));
+    if let Some(ref po) = state.port_owner {
+        po.send(crate::port_owner::PortCommand::Write(frame.to_bytes()));
+    }
     plc_log(state, &format!("Coil {} => {}", reg.name, if on { "ON" } else { "OFF" }));
 }

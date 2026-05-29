@@ -5,7 +5,7 @@ use std::fs;
 pub fn render_register_editor_panel(ui: &mut egui::Ui, state: &mut AppState) {
     let lang = state.language;
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Register Map Editor").strong());
+        ui.label(egui::RichText::new(T::register_map_editor(lang)).strong());
         ui.separator();
         if ui.button(T::import_btn(lang)).clicked() {
             if let Some(path) = rfd::FileDialog::new().add_filter("CSV", &["csv"]).add_filter("JSON", &["json"]).pick_file() {
@@ -17,7 +17,7 @@ pub fn render_register_editor_panel(ui: &mut egui::Ui, state: &mut AppState) {
                 export_register_map(state, &path);
             }
         }
-        if ui.button("Add").clicked() {
+        if ui.button(T::add_btn(lang)).clicked() {
             state.reg_map.push(RegMapEntry {
                 addr: state.reg_map.len() as u16 * 10,
                 name: format!("Reg{}", state.reg_map.len()),
@@ -61,9 +61,9 @@ pub fn render_register_editor_panel(ui: &mut egui::Ui, state: &mut AppState) {
     // Alarm
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.checkbox(&mut state.reg_alarm_enabled, "Alarm");
+        ui.checkbox(&mut state.reg_alarm_enabled, T::alarm(lang));
         if state.reg_alarm_enabled {
-            ui.label("Threshold:");
+            ui.label(T::threshold(lang));
             ui.text_edit_singleline(&mut state.reg_alarm_threshold);
         }
     });
@@ -78,7 +78,7 @@ fn import_register_map(state: &mut AppState, path: &std::path::Path) {
                         state.reg_map = entries;
                         state.add_log_entry(crate::state::LogLevel::Info, &format!("Imported {} registers from JSON", state.reg_map.len()));
                     }
-                    Err(e) => { state.add_log_entry(crate::state::LogLevel::Error, &format!("JSON parse error: {}", e)); }
+                    Err(e) => { state.show_error(&format!("JSON parse: {}", e)); }
                 }
             } else {
                 // CSV: addr,name,type,value,description
@@ -107,7 +107,7 @@ fn import_register_map(state: &mut AppState, path: &std::path::Path) {
                 state.add_log_entry(crate::state::LogLevel::Info, &format!("Imported {} registers from CSV", state.reg_map.len()));
             }
         }
-        Err(e) => { state.add_log_entry(crate::state::LogLevel::Error, &format!("File read error: {}", e)); }
+        Err(e) => { state.show_error(&format!("File read: {}", e)); }
     }
 }
 
@@ -118,6 +118,6 @@ fn export_register_map(state: &mut AppState, path: &std::path::Path) {
     }
     match fs::write(path, content) {
         Ok(()) => { state.add_log_entry(crate::state::LogLevel::Info, &format!("Exported {} registers to {}", state.reg_map.len(), path.display())); }
-        Err(e) => { state.add_log_entry(crate::state::LogLevel::Error, &format!("Export error: {}", e)); }
+        Err(e) => { state.show_error(&format!("Export: {}", e)); }
     }
 }

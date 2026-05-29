@@ -1,4 +1,6 @@
-use crate::state::{AppState, Language, T, Theme};
+use crate::port_owner::{PortCommand, PortOwnerHandle};
+use crate::state::{AppState, Language, Theme, T};
+use crate::theme;
 use eframe::egui;
 
 /// Top bar: Logo + Tool buttons + System buttons
@@ -53,18 +55,23 @@ pub fn render_connection_panel(ui: &mut egui::Ui, state: &mut AppState, ctx: &eg
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button(egui::RichText::new("?").size(14.0).strong()).on_hover_text(if lang == Language::Chinese { "使用指南" } else { "Help" }).clicked() { state.show_help = !state.show_help; }
             ui.add_space(2.0);
-            // Theme button - show current theme name, click to switch
+            // Theme button
             let (tl, th) = match state.theme {
                 Theme::Dark => ("Dark", if lang==Language::Chinese{"切换到浅色"}else{"Switch to Light"}),
                 Theme::Light => ("Light", if lang==Language::Chinese{"切换到深色"}else{"Switch to Dark"})
             };
             if ui.button(egui::RichText::new(tl).size(12.0).strong()).on_hover_text(th).clicked() {
                 state.theme = match state.theme { Theme::Dark => Theme::Light, Theme::Light => Theme::Dark };
+                // Save prefs on theme change
+                crate::app::save_prefs_from_state(state);
             }
             ui.add_space(2.0);
             let ll = if lang==Language::English {"EN"} else {"中"};
             let lh = if lang==Language::English {"Switch to Chinese"} else {"切换到英文"};
-            if ui.button(egui::RichText::new(ll).size(14.0).strong()).on_hover_text(lh).clicked() { state.language = match state.language { Language::English => Language::Chinese, Language::Chinese => Language::English }; }
+            if ui.button(egui::RichText::new(ll).size(14.0).strong()).on_hover_text(lh).clicked() {
+                state.language = match state.language { Language::English => Language::Chinese, Language::Chinese => Language::English };
+                crate::app::save_prefs_from_state(state);
+            }
         });
     });
 }
@@ -78,6 +85,9 @@ pub fn render_connection_controls(ui: &mut egui::Ui, state: &mut AppState) {
     ui.horizontal(|ui| {
         ui.label(T::serial_port(lang));
         egui::ComboBox::from_id_salt("port_select").width(90.0).selected_text(if selected.is_empty() { "—" } else { &selected }).show_ui(ui, |ui| {
+            // Auto-refresh port list when dropdown is opened
+            state.refresh_ports();
+            let port_names: Vec<String> = state.ports.iter().map(|p| p.name.clone()).collect();
             for name in &port_names { ui.selectable_value(&mut state.selected_port, Some(name.clone()), name); }
         });
         if ui.small_button("\u{21BB}").on_hover_text(T::refresh_ports(lang)).clicked() { state.refresh_ports(); }
@@ -89,56 +99,66 @@ pub fn render_connection_controls(ui: &mut egui::Ui, state: &mut AppState) {
         egui::ComboBox::from_id_salt("baud_rate").width(80.0).selected_text(format!("{}", state.config.baud_rate)).show_ui(ui, |ui| {
             for &rate in &baud_rates { ui.selectable_value(&mut state.config.baud_rate, rate, format!("{}", rate)); }
         });
-        if !state.is_connected {
-            if ui.small_button("Auto").on_hover_text(T::auto_detect(lang)).clicked() {
-                if let Some(ref pn) = state.selected_port {
-                    let pn = pn.clone();
-                    let port_ref = &state.port;
-                    let is_connected = state.is_connected;
-                    if !is_connected && port_ref.is_none() {
-                        // Run auto-detect in a thread to avoid blocking UI
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        std::thread::spawn(move || {
-                            let result = auto_detect_baud(&pn);
-                            let _ = tx.send(result);
-                        });
-                        // Store the receiver in state for polling
-                        state.auto_detect_receiver = Some(rx);
-                        state.add_log_entry(crate::state::LogLevel::Info, "Auto-detecting baud rate...");
-                    }
-                }
+
+        // Auto-detect button - disabled while detection is running or port is connected
+        let auto_enabled = !state.is_connected && !state.auto_detect_running;
+        if ui.add_enabled(auto_enabled, egui::Button::new("Auto")).on_hover_text(T::auto_detect(lang)).clicked() {
+            if let Some(ref pn) = state.selected_port {
+                let pn = pn.clone();
+                let (tx, rx) = std::sync::mpsc::channel();
+                state.auto_detect_running = true;
+                std::thread::spawn(move || {
+                    let result = auto_detect_baud(&pn);
+                    let _ = tx.send(result);
+                });
+                state.auto_detect_receiver = Some(rx);
+                state.add_log_entry(crate::state::LogLevel::Info, "Auto-detecting baud rate...");
             }
         }
+
         // Check for auto-detect result
         if let Some(ref rx) = state.auto_detect_receiver {
             if let Ok(result) = rx.try_recv() {
                 state.auto_detect_receiver = None;
+                state.auto_detect_running = false;
                 match result {
                     Some(baud) => {
                         state.config.baud_rate = baud;
                         state.add_log_entry(crate::state::LogLevel::Info, &format!("Auto-detected: {}", baud));
                     }
                     None => {
-                        state.add_log_entry(crate::state::LogLevel::Warning, "Auto-detect: no data received");
+                        let msg = if state.language == crate::state::Language::Chinese {
+                            "自动检测：未收到数据，请检查设备是否正在发送"
+                        } else {
+                            "Auto-detect: no data received. Check if device is sending."
+                        };
+                        state.show_warning(msg);
                     }
                 }
             }
         }
+
+        // Disconnect button
+        let c = theme::get_colors(state.theme);
         if state.is_connected {
-            if ui.button(egui::RichText::new(T::disconnect(lang)).color(egui::Color32::from_rgb(220, 60, 60))).clicked() {
-                if let Some(mut port) = state.port.take() { let _ = port.disconnect(); }
+            if ui.button(egui::RichText::new(T::disconnect(lang)).color(c.error)).clicked() {
+                // Drop the handle entirely — Drop impl sends Close and joins the thread
+                state.port_owner = None;
                 state.is_connected = false;
                 state.add_log_entry(crate::state::LogLevel::Info, "Disconnected");
             }
-        } else if ui.button(egui::RichText::new(T::connect(lang)).color(egui::Color32::from_rgb(0, 180, 120))).clicked() {
+        // Connect button - disabled while auto-detect is running
+        } else if !state.auto_detect_running && ui.button(egui::RichText::new(T::connect(lang)).color(c.success)).clicked() {
             if let Some(ref pn) = state.selected_port {
                 let mut config = state.config.clone();
                 config.port_name = pn.clone();
-                let mut port = serialrun_core::SerialPort::new(config);
-                match port.connect() {
-                    Ok(()) => { state.is_connected = true; state.port = Some(port); state.add_log_entry(crate::state::LogLevel::Info, &format!("Connected to {}", pn)); }
-                    Err(e) => { state.add_log_entry(crate::state::LogLevel::Error, &e.to_string()); }
-                }
+                // Drop old handle first to ensure old thread is shut down
+                state.port_owner = None;
+                let po = PortOwnerHandle::start();
+                po.send(PortCommand::Open(config));
+                state.port_owner = Some(po);
+                // Note: is_connected will be set to true when PortEvent::Opened(true) arrives
+                state.add_log_entry(crate::state::LogLevel::Info, &format!("Connecting to {}...", pn));
             }
         }
     });
@@ -157,6 +177,8 @@ fn auto_detect_baud(port_name: &str) -> Option<u32> {
         let mut buf = [0u8; 256];
         let n = port.read(&mut buf).unwrap_or(0);
         let _ = port.disconnect();
+        // Brief delay to let OS release the port handle
+        std::thread::sleep(std::time::Duration::from_millis(50));
         if n > 0 { return Some(baud); }
     }
     None

@@ -6,17 +6,17 @@ pub fn render_plugin_panel(ui: &mut egui::Ui, state: &mut AppState) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(T::plugins(lang)).strong());
         ui.separator();
-        if ui.button("Refresh").clicked() {
+        if ui.button(T::refresh_btn(lang)).clicked() {
             discover_plugins(state);
         }
     });
     ui.add_space(4.0);
 
-    ui.label("Place .dylib/.so/.dll plugins in the plugins/ directory next to the executable.");
+    ui.label(T::plugin_hint(lang));
     ui.add_space(4.0);
 
     if state.plugins.is_empty() {
-        ui.label(egui::RichText::new("No plugins found.").weak());
+        ui.label(egui::RichText::new(T::no_plugins(lang)).weak());
     } else {
         egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
             for plugin in &state.plugins {

@@ -24,6 +24,16 @@ pub fn render_file_transfer_panel(ui: &mut egui::Ui, state: &mut AppState) {
                 Ok(()) => { state.file_transfer_done = true; }
                 Err(e) => { state.file_transfer_error = Some(e); }
             }
+            // Restart port_owner for normal terminal operation
+            if state.port_owner.is_none() && state.is_connected {
+                if let Some(ref pn) = state.selected_port {
+                    let mut config = state.config.clone();
+                    config.port_name = pn.clone();
+                    let po = crate::port_owner::PortOwnerHandle::start();
+                    po.send(crate::port_owner::PortCommand::Open(config));
+                    state.port_owner = Some(po);
+                }
+            }
         }
     }
 
@@ -46,11 +56,11 @@ pub fn render_file_transfer_panel(ui: &mut egui::Ui, state: &mut AppState) {
         ui.add_space(4.0);
     }
 
-    if state.file_transfer_done { ui.label(egui::RichText::new("Done").color(egui::Color32::GREEN)); }
+    if state.file_transfer_done { ui.label(egui::RichText::new(T::done(lang)).color(egui::Color32::GREEN)); }
     else if let Some(ref e) = state.file_transfer_error { ui.label(egui::RichText::new(format!("Error: {}", e)).color(egui::Color32::RED)); }
-    else if state.file_transfer_sending { ui.label("Sending..."); }
-    else if state.file_transfer_receiving { ui.label("Receiving..."); }
-    else { ui.label("Ready"); }
+    else if state.file_transfer_sending { ui.label(T::sending(lang)); }
+    else if state.file_transfer_receiving { ui.label(T::receiving(lang)); }
+    else { ui.label(T::ready(lang)); }
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         let can = state.is_connected && !state.file_transfer_sending && !state.file_transfer_receiving;
@@ -78,6 +88,11 @@ fn start_file_transfer(state: &mut AppState, send: bool, path: &std::path::Path)
     let baud_rate = state.config.baud_rate;
     let proto = state.file_transfer_protocol;
     let file_path = path.to_path_buf();
+
+    // Stop port_owner and wait for port release before opening exclusive file transfer
+    if let Some(po) = state.port_owner.take() {
+        po.wait_for_release();
+    }
 
     let (result_tx, result_rx) = std::sync::mpsc::channel();
     let (progress_tx, progress_rx) = std::sync::mpsc::channel();

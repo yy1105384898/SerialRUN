@@ -24,7 +24,7 @@ pub fn render_modbus_panel(ui: &mut egui::Ui, state: &mut AppState) {
                         if state.modbus.frame_log.len() > 200 { state.modbus.frame_log.pop_front(); }
                     }
                 }
-                Err(e) => { state.modbus.last_error = Some(e); }
+                Err(e) => { state.modbus.last_error = Some(e.clone()); state.show_error(&e); }
             }
         }
     }
@@ -74,50 +74,31 @@ fn render_quick_request(ui: &mut egui::Ui, state: &mut AppState) {
 
 fn do_modbus_request(state: &mut AppState) {
     state.modbus.last_error = None;
-    let addr: u16 = match state.modbus.start_addr.parse() { Ok(v) => v, Err(_) => { state.modbus.last_error = Some("Invalid address".into()); return; } };
+    let addr: u16 = match state.modbus.start_addr.parse() { Ok(v) => v, Err(_) => { let m = "Invalid address".to_string(); state.modbus.last_error = Some(m.clone()); state.show_error(&m); return; } };
     let frame = if state.modbus.function_code.is_read() {
-        let qty: u16 = match state.modbus.quantity.parse() { Ok(v) => v, Err(_) => { state.modbus.last_error = Some("Invalid quantity".into()); return; } };
+        let qty: u16 = match state.modbus.quantity.parse() { Ok(v) => v, Err(_) => { let m = "Invalid quantity".to_string(); state.modbus.last_error = Some(m.clone()); state.show_error(&m); return; } };
         ModbusParser::build_read_request(state.modbus.slave_id, state.modbus.function_code.to_core_function(), addr, qty)
     } else {
-        let val: u16 = match state.modbus.write_value.parse() { Ok(v) => v, Err(_) => { state.modbus.last_error = Some("Invalid value".into()); return; } };
+        let val: u16 = match state.modbus.write_value.parse() { Ok(v) => v, Err(_) => { let m = "Invalid value".to_string(); state.modbus.last_error = Some(m.clone()); state.show_error(&m); return; } };
         ModbusParser::build_write_single(state.modbus.slave_id, addr, val)
     };
     let req_bytes = frame.to_bytes();
     let req_hex = hex_str(&req_bytes);
     state.modbus.last_request_hex = req_hex.clone();
 
-    // Start async request in background thread
+    // Start async request via port owner
     if state.modbus_async_receiver.is_none() {
         let (tx, rx) = std::sync::mpsc::channel();
-        let port_name = state.selected_port.clone().unwrap_or_default();
-        let baud_rate = state.config.baud_rate;
+        let po = state.port_owner.as_ref().map(|p| p.cmd_tx());
         state.modbus_async_receiver = Some(rx);
         std::thread::spawn(move || {
-            let config = serialrun_core::config::SerialConfig {
-                port_name,
-                baud_rate,
-                ..Default::default()
-            };
-            let mut port = serialrun_core::SerialPort::new(config);
-            if port.connect().is_ok() {
-                if port.write(&req_bytes).is_ok() {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                    let mut buf = [0u8; 256];
-                    match port.read(&mut buf) {
-                        Ok(n) if n >= 4 => {
-                            let _ = tx.send(Ok(buf[..n].to_vec()));
-                        }
-                        _ => {
-                            let _ = tx.send(Err("No response".into()));
-                        }
-                    }
-                } else {
-                    let _ = tx.send(Err("Write failed".into()));
-                }
-                let _ = port.disconnect();
-            } else {
-                let _ = tx.send(Err("Connect failed".into()));
-            }
+            let Some(cmd_tx) = po else { let _ = tx.send(Err("Not connected".into())); return; };
+            let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+            let _ = cmd_tx.send(crate::port_owner::PortCommand::WriteRead { data: req_bytes, timeout_ms: 100, resp_tx });
+            let result = resp_rx.recv().unwrap_or_else(|e| Err(format!("Channel closed: {}", e)));
+            let _ = tx.send(result.and_then(|data| {
+                if data.len() >= 4 { Ok(data) } else { Err("Response too short".into()) }
+            }));
         });
     }
 }
@@ -185,9 +166,18 @@ fn do_monitor_poll(state: &mut AppState) {
     let qty: u16 = match state.modbus.monitor_quantity.parse() { Ok(v) => v, Err(_) => return };
     let frame = ModbusParser::build_read_request(state.modbus.monitor_slave_id, state.modbus.monitor_function.to_core_function(), addr, qty);
     let req = frame.to_bytes();
-    let port_name = state.selected_port.clone().unwrap_or_default();
-    let baud_rate = state.config.baud_rate;
-    state.modbus_monitor_async = Some(crate::async_utils::spawn_serial_write_read(port_name, baud_rate, req, 50));
+    let po = match state.port_owner.as_ref().map(|p| p.cmd_tx()) {
+        Some(tx) => tx,
+        None => return,
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    state.modbus_monitor_async = Some(rx);
+    std::thread::spawn(move || {
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+        let _ = po.send(crate::port_owner::PortCommand::WriteRead { data: req, timeout_ms: 50, resp_tx });
+        let result = resp_rx.recv().unwrap_or_else(|e| Err(format!("Channel closed: {}", e)));
+        let _ = tx.send(result);
+    });
 }
 
 fn render_frame_log(ui: &mut egui::Ui, state: &mut AppState) {
