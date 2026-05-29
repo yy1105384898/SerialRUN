@@ -956,6 +956,10 @@ pub struct AppState {
     pub mcp_cmd_tx: Option<mpsc::Sender<crate::mcp_server::McpCommand>>,
     // MCP access log (for GUI display)
     pub mcp_access_log: VecDeque<crate::mcp_server::McpAccessLogEntry>,
+    pub show_mcp_log_popup: bool,
+    // Device identification for traceability
+    pub device_id: String,
+    pub device_model: String,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1191,11 +1195,15 @@ impl AppState {
             mcp_enabled: true, mcp_port: 9527, mcp_bind_lan: false, mcp_running: false, mcp_status: String::new(),
             mcp_cmd_tx: None,
             mcp_access_log: VecDeque::new(),
+            show_mcp_log_popup: false,
+            device_id: String::new(),
+            device_model: String::new(),
         };
         // Load persisted data from previous session
         state.load_logs();
         state.load_terminal();
         state.load_warnings();
+        state.load_mcp_log();
         state
     }
 
@@ -1269,6 +1277,25 @@ impl AppState {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(entries) = serde_json::from_str::<VecDeque<TerminalLine>>(&content) {
                     self.terminal_buffer = entries;
+                }
+            }
+        }
+    }
+
+    pub fn save_mcp_log(&self) {
+        if let Some(path) = mcp_log_file_path() {
+            if let Ok(content) = serde_json::to_string(&self.mcp_access_log) {
+                let _ = std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")));
+                let _ = std::fs::write(&path, content);
+            }
+        }
+    }
+
+    pub fn load_mcp_log(&mut self) {
+        if let Some(path) = mcp_log_file_path() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(entries) = serde_json::from_str::<VecDeque<crate::mcp_server::McpAccessLogEntry>>(&content) {
+                    self.mcp_access_log = entries;
                 }
             }
         }
@@ -1348,4 +1375,9 @@ fn terminal_file_path() -> Option<std::path::PathBuf> {
 fn warning_file_path() -> Option<std::path::PathBuf> {
     let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
     Some(std::path::PathBuf::from(home).join(".serialrun").join("warnings.json"))
+}
+
+fn mcp_log_file_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
+    Some(std::path::PathBuf::from(home).join(".serialrun").join("mcp_access_log.json"))
 }

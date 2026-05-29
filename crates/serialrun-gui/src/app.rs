@@ -144,11 +144,16 @@ impl eframe::App for SerialRunApp {
         }
 
         // Poll MCP access log entries
+        let mut mcp_log_changed = false;
         while let Some(entry) = self.mcp_handle.poll_log() {
             state.mcp_access_log.push_back(entry);
-            if state.mcp_access_log.len() > 100 {
+            if state.mcp_access_log.len() > 200 {
                 state.mcp_access_log.pop_front();
             }
+            mcp_log_changed = true;
+        }
+        if mcp_log_changed {
+            state.save_mcp_log();
         }
 
         // Sync port_owner to MCP server whenever it changes
@@ -348,5 +353,52 @@ impl eframe::App for SerialRunApp {
         toggle_window!(state.show_flasher_window, T::flasher(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::flasher::render_flasher_panel(ui, s), 420.0, 350.0);
         toggle_window!(state.show_register_editor_window, T::register_editor(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::register_editor::render_register_editor_panel(ui, s), 500.0, 400.0);
         toggle_window!(state.show_plugin_window, T::plugins(lang), |ui: &mut egui::Ui, s: &mut AppState| ui::plugin::render_plugin_panel(ui, s), 480.0, 400.0);
+
+        // MCP Access Log popup
+        if state.show_mcp_log_popup {
+            let title = if lang == Language::Chinese { "MCP 访问日志" } else { "MCP Access Log" };
+            let mut open = state.show_mcp_log_popup;
+            let c = crate::theme::get_colors(state.theme);
+            egui::Window::new(title)
+                .open(&mut open)
+                .default_width(500.0)
+                .default_height(400.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    let count = state.mcp_access_log.len();
+                    ui.label(egui::RichText::new(
+                        format!("{} {}", count, if lang == Language::Chinese { "条记录" } else { "entries" })
+                    ).color(c.text_muted));
+                    ui.separator();
+
+                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                        for entry in state.mcp_access_log.iter().rev().take(100) {
+                            let color = match entry.action.as_str() {
+                                "CONNECT" => c.mcp_connect,
+                                "DISCONNECT" => c.mcp_disconnect,
+                                "CALL" => c.mcp_call,
+                                _ => c.text_muted,
+                            };
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(egui::RichText::new(&entry.timestamp).color(c.timestamp_color).monospace().small());
+                                ui.label(egui::RichText::new(&entry.client_ip).color(c.text_primary).strong().small());
+                                ui.label(egui::RichText::new(&entry.action).color(color).strong().small());
+                                ui.label(egui::RichText::new(&entry.detail).color(c.text_secondary).small());
+                            });
+                        }
+                    });
+
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button(egui::RichText::new(
+                            if lang == Language::Chinese { "清空日志" } else { "Clear Log" }
+                        ).color(c.error)).clicked() {
+                            state.mcp_access_log.clear();
+                            state.save_mcp_log();
+                        }
+                    });
+                });
+            state.show_mcp_log_popup = open;
+        }
     }
 }

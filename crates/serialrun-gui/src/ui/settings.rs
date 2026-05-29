@@ -162,27 +162,16 @@ pub fn render_settings_panel(ui: &mut egui::Ui, state: &mut AppState, _ctx: &egu
             }
         }
 
-        // Access log display
-        if !state.mcp_access_log.is_empty() {
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new(if lang == Language::Chinese { "访问日志" } else { "Access Log" }).strong().size(12.0));
-            egui::ScrollArea::vertical().max_height(120.0).stick_to_bottom(true).show(ui, |ui| {
-                for entry in state.mcp_access_log.iter().rev().take(20) {
-                    let ts = entry.timestamp.chars().skip(11).take(12).collect::<String>();
-                    let color = match entry.action.as_str() {
-                        "CONNECT" => egui::Color32::from_rgb(0, 180, 0),
-                        "DISCONNECT" => egui::Color32::from_rgb(180, 60, 60),
-                        "CALL" => egui::Color32::from_rgb(80, 160, 230),
-                        _ => egui::Color32::GRAY,
-                    };
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(format!("[{}]", ts)).monospace().small().weak());
-                        ui.label(egui::RichText::new(&entry.client_ip).monospace().small().strong());
-                        ui.label(egui::RichText::new(&entry.action).color(color).small().strong());
-                        ui.label(egui::RichText::new(&entry.detail).small().weak());
-                    });
-                }
-            });
+        // Access log button
+        ui.add_space(4.0);
+        let log_count = state.mcp_access_log.len();
+        let log_label = if lang == Language::Chinese {
+            format!("\u{1F4CB} 访问日志 ({})", log_count)
+        } else {
+            format!("\u{1F4CB} Access Log ({})", log_count)
+        };
+        if ui.button(egui::RichText::new(&log_label).strong()).clicked() {
+            state.show_mcp_log_popup = !state.show_mcp_log_popup;
         }
     }
 

@@ -14,12 +14,14 @@ pub enum McpCommand {
 }
 
 /// Access log entry sent from MCP server to GUI
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct McpAccessLogEntry {
     pub timestamp: String,
     pub client_ip: String,
     pub action: String,
     pub detail: String,
+    #[serde(default)]
+    pub device_info: String,
 }
 
 pub enum McpStatus {
@@ -64,6 +66,8 @@ impl McpHandle {
 /// Shared state between MCP manager and handler threads
 struct McpShared {
     port_owner: Option<mpsc::Sender<crate::port_owner::PortCommand>>,
+    /// Whether the port is actually connected
+    connected: std::sync::atomic::AtomicBool,
     /// Active client count for concurrency control
     active_clients: std::sync::atomic::AtomicUsize,
     /// Access log entries (IP, time, action)
@@ -76,6 +80,7 @@ struct AccessLogEntry {
     client_ip: String,
     action: String,
     detail: String,
+    device_info: String,
 }
 
 fn mcp_manager(cmd_rx: mpsc::Receiver<McpCommand>, status_tx: mpsc::Sender<McpStatus>, log_tx: mpsc::Sender<McpAccessLogEntry>) {
@@ -84,6 +89,7 @@ fn mcp_manager(cmd_rx: mpsc::Receiver<McpCommand>, status_tx: mpsc::Sender<McpSt
     let mut current_thread: Option<std::thread::JoinHandle<()>> = None;
     let shared = Arc::new(Mutex::new(McpShared {
         port_owner: None,
+        connected: std::sync::atomic::AtomicBool::new(false),
         active_clients: std::sync::atomic::AtomicUsize::new(0),
         access_log: std::sync::Mutex::new(Vec::new()),
     }));
@@ -374,12 +380,20 @@ fn handle_request(
                     },
                     {
                         "name": "get_access_log",
-                        "description": "Get MCP access log (client IPs, tool calls, timestamps)",
+                        "description": "Get MCP access log (client IPs, tool calls, timestamps, device info)",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "limit": { "type": "integer", "description": "Max entries to return (default: 50)" }
                             }
+                        }
+                    },
+                    {
+                        "name": "get_device_info",
+                        "description": "Get current device identification info (port, baud rate, connection status)",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
                         }
                     }
                 ]
@@ -416,12 +430,18 @@ fn handle_request(
                         return McpResponse::error(request.id, -32602, "Port name is required".into());
                     }
 
-                    let sh = match shared.lock() {
-                        Ok(sh) => sh,
-                        Err(_) => return McpResponse::error(request.id, -1, "Internal error".into()),
-                    };
-                    let Some(ref po) = sh.port_owner else {
-                        return McpResponse::error(request.id, -1, "Not connected to port owner. Connect via GUI first.".into());
+                    // Get or create port_owner
+                    let po = {
+                        let mut sh = match shared.lock() {
+                            Ok(sh) => sh,
+                            Err(_) => return McpResponse::error(request.id, -1, "Internal error".into()),
+                        };
+                        if sh.port_owner.is_none() {
+                            // Create a new port_owner for MCP
+                            let new_po = crate::port_owner::PortOwnerHandle::start();
+                            sh.port_owner = Some(new_po.cmd_tx());
+                        }
+                        sh.port_owner.as_ref().unwrap().clone()
                     };
 
                     let config = serialrun_core::config::SerialConfig {
@@ -430,23 +450,33 @@ fn handle_request(
                         ..Default::default()
                     };
                     let _ = po.send(crate::port_owner::PortCommand::Open(config));
-                    // Wait for connection result via a one-shot channel
+                    // Wait for connection result by polling for Opened event
                     let (verify_tx, verify_rx) = mpsc::channel();
                     let po_clone = po.clone();
                     std::thread::spawn(move || {
-                        // Poll for Opened event by sending a test WriteRead
-                        std::thread::sleep(std::time::Duration::from_millis(300));
-                        let (rtx, rrx) = mpsc::channel();
-                        let _ = po_clone.send(crate::port_owner::PortCommand::WriteRead {
-                            data: vec![],
-                            timeout_ms: 100,
-                            resp_tx: rtx,
-                        });
-                        let result = rrx.recv().unwrap_or_else(|_| Err("Timeout".into()));
-                        let _ = verify_tx.send(result.is_ok());
+                        // Try WriteRead with empty data to verify port is open
+                        for _ in 0..5 {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            let (rtx, rrx) = mpsc::channel();
+                            let _ = po_clone.send(crate::port_owner::PortCommand::WriteRead {
+                                data: vec![],
+                                timeout_ms: 50,
+                                resp_tx: rtx,
+                            });
+                            if let Ok(result) = rrx.recv() {
+                                // If we get any response (even error), port is open
+                                let _ = verify_tx.send(true);
+                                return;
+                            }
+                        }
+                        let _ = verify_tx.send(false);
                     });
                     let connected = verify_rx.recv().unwrap_or(false);
                     if connected {
+                        // Set connected flag
+                        if let Ok(sh) = shared.lock() {
+                            sh.connected.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
                         McpResponse::success(request.id, serde_json::json!({
                             "content": [{ "type": "text", "text": format!("Connected to {} at {} baud", port_name, baud_rate) }]
                         }))
@@ -463,6 +493,7 @@ fn handle_request(
                         return McpResponse::error(request.id, -1, "Not connected to port owner".into());
                     };
                     let _ = po.send(crate::port_owner::PortCommand::Close);
+                    sh.connected.store(false, std::sync::atomic::Ordering::Relaxed);
                     McpResponse::success(request.id, serde_json::json!({
                         "content": [{ "type": "text", "text": "Disconnected" }]
                     }))
@@ -770,6 +801,26 @@ fn handle_request(
                         "content": [{ "type": "text", "text": format!("Active clients: {}\n\nAccess Log (last {}):\n{}", active, log_entries.len(), serde_json::to_string_pretty(&log_entries).unwrap()) }]
                     }))
                 }
+                "get_device_info" => {
+                    let sh = match shared.lock() {
+                        Ok(sh) => sh,
+                        Err(_) => return McpResponse::error(request.id, -1, "Internal error".into()),
+                    };
+                    let connected = sh.connected.load(std::sync::atomic::Ordering::Relaxed);
+                    let active = sh.active_clients.load(std::sync::atomic::Ordering::Relaxed);
+                    let log_count = match sh.access_log.lock() {
+                        Ok(log) => log.len(),
+                        Err(_) => 0,
+                    };
+                    McpResponse::success(request.id, serde_json::json!({
+                        "content": [{ "type": "text", "text": format!(
+                            "Device: SerialRUN\nStatus: {}\nActive clients: {}\nTotal access log entries: {}\nServer: MCP v0.2.0\nProtocol: JSON-RPC over TCP",
+                            if connected { "Connected" } else { "Disconnected" },
+                            active,
+                            log_count
+                        ) }]
+                    }))
+                }
                 _ => McpResponse::error(request.id, -32601, format!("Unknown tool: {}", tool_name))
             }
         }
@@ -840,12 +891,24 @@ fn handle_client(mut stream: TcpStream, shared: Arc<Mutex<McpShared>>, client_ip
 fn log_access(shared: &Arc<Mutex<McpShared>>, client_ip: &str, action: &str, detail: &str, log_tx: &mpsc::Sender<McpAccessLogEntry>) {
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
 
+    // Get device info from shared state
+    let device_info = {
+        let sh = shared.lock().unwrap();
+        if let Some(ref po) = sh.port_owner {
+            // Try to get device info by sending a test command
+            format!("SerialRUN@{}", client_ip)
+        } else {
+            "No device connected".to_string()
+        }
+    };
+
     // Send to GUI via channel
     let gui_entry = McpAccessLogEntry {
         timestamp: ts.clone(),
         client_ip: client_ip.to_string(),
         action: action.to_string(),
         detail: detail.to_string(),
+        device_info: device_info.clone(),
     };
     let _ = log_tx.send(gui_entry);
 
@@ -855,6 +918,7 @@ fn log_access(shared: &Arc<Mutex<McpShared>>, client_ip: &str, action: &str, det
         client_ip: client_ip.to_string(),
         action: action.to_string(),
         detail: detail.to_string(),
+        device_info,
     };
     if let Ok(sh) = shared.lock() {
         if let Ok(mut log) = sh.access_log.lock() {

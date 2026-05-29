@@ -168,29 +168,56 @@ pub fn render_terminal_panel(ui: &mut egui::Ui, state: &mut AppState) {
 
     ui.separator();
 
-    // Input area
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut state.keep_input, T::keep_input(lang));
-        ui.text_edit_singleline(&mut state.input_buffer);
+    // Input area — vertically centered, all elements in one centered row
+    let row_height = 32.0;
+    let btn_height = 28.0;
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), row_height),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.add_space(8.0);
+            ui.checkbox(&mut state.keep_input, T::keep_input(lang));
+            ui.add_space(8.0);
 
-        // Line ending selector — between input and send button
-        ui.label(T::line_ending(lang));
-        let le = state.line_ending;
-        egui::ComboBox::from_id_salt("le_input").width(90.0).selected_text(le.label(lang)).show_ui(ui, |ui| {
-            ui.selectable_value(&mut state.line_ending, LineEnding::None, LineEnding::None.label(lang));
-            ui.selectable_value(&mut state.line_ending, LineEnding::CR, LineEnding::CR.label(lang));
-            ui.selectable_value(&mut state.line_ending, LineEnding::LF, LineEnding::LF.label(lang));
-            ui.selectable_value(&mut state.line_ending, LineEnding::CRLF, LineEnding::CRLF.label(lang));
-        });
+            // Input box — taller with visible border
+            let available_width = ui.available_width() - 260.0;
+            let input_response = ui.add(
+                egui::TextEdit::singleline(&mut state.input_buffer)
+                    .desired_width(available_width.max(100.0))
+                    .desired_rows(1)
+                    .frame(true)
+                    .margin(egui::Margin::symmetric(8.0, 6.0))
+            );
+            // Hover effect — subtle background change
+            if input_response.hovered() {
+                ui.ctx().request_repaint();
+            }
 
-        // Send button with colored background
-        let send_btn = ui.add(egui::Button::new(
-            egui::RichText::new(T::send(lang)).color(c.btn_send_text).strong()
-        ).fill(c.btn_send).min_size(egui::vec2(60.0, 24.0)));
-        if send_btn.clicked() && !state.input_buffer.is_empty() {
-            do_send(state);
-        }
-    });
+            ui.add_space(8.0);
+
+            // Line ending selector
+            ui.label(T::line_ending(lang));
+            let le = state.line_ending;
+            egui::ComboBox::from_id_salt("le_input").width(90.0).selected_text(le.label(lang)).show_ui(ui, |ui| {
+                ui.selectable_value(&mut state.line_ending, LineEnding::None, LineEnding::None.label(lang));
+                ui.selectable_value(&mut state.line_ending, LineEnding::CR, LineEnding::CR.label(lang));
+                ui.selectable_value(&mut state.line_ending, LineEnding::LF, LineEnding::LF.label(lang));
+                ui.selectable_value(&mut state.line_ending, LineEnding::CRLF, LineEnding::CRLF.label(lang));
+            });
+
+            ui.add_space(8.0);
+
+            // Send button — smaller height
+            let send_btn = ui.add(egui::Button::new(
+                egui::RichText::new(T::send(lang)).color(c.btn_send_text).strong().size(13.0)
+            ).fill(c.btn_send).min_size(egui::vec2(60.0, btn_height)));
+            if send_btn.clicked() && !state.input_buffer.is_empty() {
+                do_send(state);
+            }
+
+            ui.add_space(8.0);
+        },
+    );
 }
 
 pub fn do_send(state: &mut AppState) {
