@@ -31,3 +31,6 @@ test_*.py
 
 # Website (deployed separately to Cloudflare Pages)
 website/
+
+# GUI (proprietary, not published to public repos)
+crates/serialrun-gui/
