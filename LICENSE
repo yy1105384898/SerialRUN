@@ -1,6 +1,69 @@
-MIT License
+BUSINESS SOURCE LICENSE 1.1
 
 Copyright (c) 2026 SerialRUN
+
+Licensor: SerialRUN
+
+Licensed Work:      SerialRUN
+                    The Licensed Work is (c) 2026 SerialRUN
+
+Change Date:        The earlier of (a) May 31, 2030 or (b) the date on which
+                    the Licensor publishes a notice publicly announcing the
+                    change of the Licensed Work to an Open Source License.
+
+Change License:     MIT License
+
+For the avoidance of doubt:
+
+1. Business Use. This License is not an Open Source License. Notwithstanding
+   anything herein, this License authorizes use of the Licensed Work solely
+   for Business Use. Business Use means any activity that primarily involves
+   a commercial entity and is not for the purpose of gaining direct or
+   indirect commercial advantage or monetary compensation. Examples of
+   permitted Business Use include: evaluation, internal testing, development,
+   and non-commercial research.
+
+2. Non-Commercial Use. Individuals and non-commercial entities may use,
+   modify, and distribute the Licensed Work for non-commercial purposes
+   without restriction.
+
+3. Commercial Use Restrictions. Commercial Use of the Licensed Work requires
+   a separate license from the Licensor. Commercial Use means any activity
+   that primarily involves a commercial entity and is intended for or results
+   in direct or indirect commercial advantage or monetary compensation.
+
+4. Distribution. You may distribute copies of the Licensed Work in
+   unmodified form. You may not distribute modified versions of the Licensed
+   Work without a separate license from the Licensor.
+
+5. Trademark. This License does not grant permission to use the trade
+   names, trademarks, service marks, or product names of the Licensor,
+   except as required for reasonable and customary use in describing the
+   origin of the Licensed Work.
+
+6. NOTICE. The above copyright notice and this permission notice shall be
+   included in all copies or substantial portions of the Licensed Work.
+
+7. CONVERTING TO OPEN SOURCE. On the Change Date, or if the Licensor
+   publishes a notice publicly announcing the early conversion of the
+   Licensed Work, the Licensed Work will be licensed under the Change
+   License (MIT License). For the avoidance of doubt, the Change License
+   applies to the entire Licensed Work, and all provisions of this License
+   related to the Change License will expire on the Change Date. After the
+   Change Date, the Licensed Work will be subject to the Change License
+   in perpetuity.
+
+LIMITATION OF LIABILITY. THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT
+WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE LICENSED
+WORK OR THE USE OR OTHER DEALINGS IN THE LICENSED WORK.
+
+---
+
+MIT License (Change License)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
