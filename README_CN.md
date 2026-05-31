@@ -29,18 +29,25 @@
 | 平台 | 链接 |
 |------|------|
 | Windows (x64) | [SerialRUN-v0.1.0-windows-x64.zip](http://192.168.31.85:38633/yao/serialrun/releases/tag/v0.1.0) |
-| macOS | 从源码编译（见下方） |
-| Linux | 从源码编译（见下方） |
+| macOS (Apple Silicon / Intel) | 从源码编译 |
+| Linux (x86_64 / aarch64) | 从源码编译 |
 
-或从源码编译：
+### 从源码编译
 
 ```bash
 git clone https://github.com/YaoIsAI/SerialRUN.git
 cd SerialRUN
 cargo build --release
-# 二进制文件：target/release/serialrun.exe (Windows)
-#             target/release/serialrun (macOS/Linux)
+
+# Windows:  target/release/serialrun.exe
+# macOS:    target/release/serialrun
+# Linux:    target/release/serialrun
+
+# macOS .app 应用包：
+make app
 ```
+
+详见 [docs/BUILD_CN.md](docs/BUILD_CN.md) 了解各平台构建详情。
 
 ---
 

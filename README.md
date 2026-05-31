@@ -29,18 +29,25 @@
 | Platform | Link |
 |----------|------|
 | Windows (x64) | [SerialRUN-v0.1.0-windows-x64.zip](http://192.168.31.85:38633/yao/serialrun/releases/tag/v0.1.0) |
-| macOS | Build from source (see below) |
-| Linux | Build from source (see below) |
+| macOS (Apple Silicon / Intel) | Build from source |
+| Linux (x86_64 / aarch64) | Build from source |
 
-Or build from source:
+### Build from Source
 
 ```bash
 git clone https://github.com/YaoIsAI/SerialRUN.git
 cd SerialRUN
 cargo build --release
-# Binary at: target/release/serialrun.exe (Windows)
-#            target/release/serialrun (macOS/Linux)
+
+# Windows:  target/release/serialrun.exe
+# macOS:    target/release/serialrun
+# Linux:    target/release/serialrun
+
+# macOS .app bundle:
+make app
 ```
+
+See [docs/BUILD.md](docs/BUILD.md) for detailed platform-specific instructions.
 
 ## Features
 
