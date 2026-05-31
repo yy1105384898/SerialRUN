@@ -5,7 +5,7 @@
 **专业串口调试助手 — 面向嵌入式开发者**
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](https://spdx.org/licenses/BSL-1.1.html)
+[![License](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](https://mariadb.com/bsl11/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)]()
 
 [English](README.md) | [中文](#功能特性)
@@ -28,7 +28,7 @@
 
 | 平台 | 链接 |
 |------|------|
-| Windows (x64) | [SerialRUN-v0.1.0-windows-x64.zip](http://192.168.31.85:38633/yao/serialrun/releases/tag/v0.1.0) |
+| Windows (x64) | [SerialRUN-v0.1.0-windows-x64.zip](https://master.serialrun.pages.dev/#download) |
 | macOS (Apple Silicon / Intel) | 从源码编译 |
 | Linux (x86_64 / aarch64) | 从源码编译 |
 
@@ -264,7 +264,7 @@ cargo bench       # 运行性能测试
 
 ## 许可证
 
-SerialRUN 采用 [Business Source License 1.1](https://spdx.org/licenses/BSL-1.1.html) 和 [MIT 许可证](LICENSE) 双重许可。详见 [LICENSE](LICENSE)。
+SerialRUN 采用 [Business Source License 1.1](https://mariadb.com/bsl11/) 和 [MIT 许可证](LICENSE) 双重许可。详见 [LICENSE](LICENSE)。
 
 ---
 

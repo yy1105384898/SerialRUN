@@ -5,7 +5,7 @@
 **Professional Serial Port Debugging Assistant for Embedded Developers**
 
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](https://spdx.org/licenses/BSL-1.1.html)
+[![License](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](https://mariadb.com/bsl11/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)]()
 
 [English](#features) | [中文](README_CN.md)
@@ -28,7 +28,7 @@
 
 | Platform | Link |
 |----------|------|
-| Windows (x64) | [SerialRUN-v0.1.0-windows-x64.zip](http://192.168.31.85:38633/yao/serialrun/releases/tag/v0.1.0) |
+| Windows (x64) | [SerialRUN-v0.1.0-windows-x64.zip](https://master.serialrun.pages.dev/#download) |
 | macOS (Apple Silicon / Intel) | Build from source |
 | Linux (x86_64 / aarch64) | Build from source |
 
@@ -262,7 +262,7 @@ cargo bench       # Run benchmarks
 
 ## License
 
-SerialRUN is dual-licensed under the [Business Source License 1.1](https://spdx.org/licenses/BSL-1.1.html) and the [MIT License](LICENSE). See [LICENSE](LICENSE) for details.
+SerialRUN is dual-licensed under the [Business Source License 1.1](https://mariadb.com/bsl11/) and the [MIT License](LICENSE). See [LICENSE](LICENSE) for details.
 
 ---
 
