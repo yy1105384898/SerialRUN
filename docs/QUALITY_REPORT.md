@@ -48,7 +48,7 @@
 | 全局错误系统 | ✅ 完整 | 优秀 |
 | 数据持久化 | ✅ 完整 | 优秀 |
 
-**MCP 工具验证（12/12 通过）：**
+**MCP 工具验证（15/15 通过）：**
 - list_ports ✅
 - connect ✅（可独立创建 port_owner）
 - disconnect ✅
@@ -59,6 +59,9 @@
 - modbus_write ✅
 - plc_read ✅
 - plc_write ✅
+- status ✅
+- get_config ✅
+- set_config ✅
 - get_access_log ✅
 - get_device_info ✅
 
@@ -201,7 +204,7 @@
 14. 全局错误提示 ✅
 15. 警告历史 ✅
 
-### MCP 功能（12/12 完整）
+### MCP 功能（15/15 完整）
 1. list_ports ✅
 2. connect ✅
 3. disconnect ✅
@@ -212,8 +215,11 @@
 8. modbus_write ✅
 9. plc_read ✅
 10. plc_write ✅
-11. get_access_log ✅
-12. get_device_info ✅
+11. status ✅
+12. get_config ✅
+13. set_config ✅
+14. get_access_log ✅
+15. get_device_info ✅
 
 ### CLI 功能（7/7 完整）
 1. list ✅
@@ -272,7 +278,7 @@
 
 ## 结论
 
-SerialRUN 是一个功能完整、架构清晰、用户体验良好的串口调试助手。核心功能稳定可靠，MCP 服务器支持 12 个工具且全部验证通过，CLI 工具功能完整。
+SerialRUN 是一个功能完整、架构清晰、用户体验良好的串口调试助手。核心功能稳定可靠，MCP 服务器支持 15 个工具且全部验证通过，CLI 工具功能完整。
 
 **综合评价：** 生产可用，建议在内部测试后发布。主要改进方向是安全性（MCP 认证）和测试覆盖。
 

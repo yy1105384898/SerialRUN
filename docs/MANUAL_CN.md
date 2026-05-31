@@ -19,7 +19,7 @@ SerialRUN 是面向嵌入式开发者的跨平台串口助手，提供 CLI 和 G
 ## 安装
 
 ```bash
-git clone https://github.com/yourusername/SerialRUN.git
+git clone https://github.com/YaoIsAI/SerialRUN.git
 cd SerialRUN
 cargo build --release
 ```

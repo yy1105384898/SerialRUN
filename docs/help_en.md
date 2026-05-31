@@ -416,7 +416,7 @@ In the left settings panel, find "MCP Server":
    - **All interfaces (LAN)** — Allow LAN AI assistants to connect
 4. Click **Copy MCP Info** button to one-click copy connection info and tool descriptions for your AI assistant
 
-### Available Tools (14)
+### Available Tools (15)
 
 | Tool | Description |
 |------|-------------|
@@ -434,6 +434,7 @@ In the left settings panel, find "MCP Server":
 | `get_config` | Read UI settings (supports all or single key) |
 | `set_config` | Update UI setting (syncs to GUI immediately) |
 | `get_access_log` | View access log (client IPs, tool calls, timestamps) |
+| `get_device_info` | Get current device identification info (port, baud rate, connection status) |
 
 ### Usage
 

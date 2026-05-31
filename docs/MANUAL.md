@@ -19,7 +19,7 @@ SerialRUN is a cross-platform serial port assistant designed for embedded develo
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/SerialRUN.git
+git clone https://github.com/YaoIsAI/SerialRUN.git
 cd SerialRUN
 cargo build --release
 ```
