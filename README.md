@@ -7,6 +7,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](https://mariadb.com/bsl11/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)]()
+[![Website](https://img.shields.io/badge/Website-serialrun.com-brightgreen)](https://www.serialrun.com)
 
 [English](#features) | [中文](README_CN.md)
 
@@ -20,6 +21,18 @@
 
 <p align="center">
   <em>Modbus RTU debugging — real-time register monitoring with TX/RX terminal display</em>
+</p>
+
+### Website
+
+<p align="center">
+  <a href="https://www.serialrun.com" target="_blank">
+    <img src="assets/screenshot_website_en.png" alt="SerialRUN Website" width="800">
+  </a>
+</p>
+
+<p align="center">
+  <em><a href="https://www.serialrun.com" target="_blank">www.serialrun.com</a> — Features, download, user guide, and documentation</em>
 </p>
 
 ---

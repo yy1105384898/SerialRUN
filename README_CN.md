@@ -7,6 +7,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](https://mariadb.com/bsl11/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)]()
+[![Website](https://img.shields.io/badge/Website-serialrun.com-brightgreen)](https://www.serialrun.com)
 
 [English](README.md) | [中文](#功能特性)
 
@@ -16,6 +17,18 @@
 
 <p align="center">
   <img src="assets/screenshot_zh.png" alt="SerialRUN 截图" width="800">
+</p>
+
+### 官网
+
+<p align="center">
+  <a href="https://www.serialrun.com" target="_blank">
+    <img src="assets/screenshot_website_zh.png" alt="SerialRUN 网站" width="800">
+  </a>
+</p>
+
+<p align="center">
+  <em><a href="https://www.serialrun.com" target="_blank">www.serialrun.com</a> — 功能介绍、下载、使用指南和文档</em>
 </p>
 
 <p align="center">
