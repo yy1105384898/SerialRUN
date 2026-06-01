@@ -89,3 +89,14 @@ fn test_agent_list_ports() {
         .success()
         .stdout(predicate::str::contains("success"));
 }
+
+#[test]
+fn test_tcp_help() {
+    Command::cargo_bin("serialrun")
+        .unwrap()
+        .args(["tcp", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("modbus-tcp"))
+        .stdout(predicate::str::contains("iec104"));
+}

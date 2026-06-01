@@ -7,8 +7,10 @@ pub mod plugin;
 pub mod port;
 pub mod protocol;
 pub mod recorder;
+pub mod tcp;
 
 pub use config::SerialConfig;
-pub use port::{SerialPort, SerialPortInfo};
 pub use plugin::{LoadedPlugin, PluginManager};
+pub use port::{SerialPort, SerialPortInfo};
 pub use recorder::{ScriptRecorder, ScriptReplayer};
+pub use tcp::{TcpClient, TcpClientConfig};

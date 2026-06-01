@@ -1,5 +1,6 @@
 use serialrun_core::protocol::modbus::*;
 use serialrun_core::protocol::custom::*;
+use serialrun_core::protocol::{build_startdt_act, Iec104Apdu, Iec104FrameKind, ModbusTcpFrame};
 
 #[test]
 fn test_modbus_crc_calculation() {
@@ -182,4 +183,30 @@ fn test_protocol_parser_clear() {
     assert!(!parser.patterns().is_empty());
     parser.clear();
     assert!(parser.patterns().is_empty());
+}
+
+#[test]
+fn test_modbus_tcp_frame_build_and_parse() {
+    let rtu = ModbusParser::build_read_request(
+        0x01,
+        ModbusFunction::ReadHoldingRegisters,
+        0x0000,
+        0x0002,
+    );
+    let tcp = ModbusTcpFrame::from_rtu_frame(&rtu, 0x0001);
+    let parsed = ModbusTcpFrame::parse(&tcp.to_bytes()).unwrap();
+
+    assert_eq!(parsed.transaction_id, 0x0001);
+    assert_eq!(parsed.unit_id, 0x01);
+    assert_eq!(parsed.function, ModbusFunction::ReadHoldingRegisters);
+    assert_eq!(parsed.data, vec![0x00, 0x00, 0x00, 0x02]);
+}
+
+#[test]
+fn test_iec104_startdt_frame() {
+    let bytes = build_startdt_act();
+    let parsed = Iec104Apdu::parse(&bytes).unwrap();
+
+    assert_eq!(bytes, vec![0x68, 0x04, 0x07, 0x00, 0x00, 0x00]);
+    assert_eq!(parsed.kind(), Iec104FrameKind::UFormat(0x07));
 }

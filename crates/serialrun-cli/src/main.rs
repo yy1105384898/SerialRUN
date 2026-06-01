@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use serialrun_core::{SerialConfig, SerialPort};
+use serialrun_core::{SerialConfig, SerialPort, TcpClient, TcpClientConfig};
 use std::io::{self, Write};
 use std::time::Duration;
 
@@ -150,6 +150,44 @@ enum Commands {
         value: u16,
     },
 
+    /// TCP quick request for Modbus TCP or IEC 60870-5-104
+    Tcp {
+        /// TCP protocol (modbus-tcp, iec104)
+        #[arg(short = 'P', long, default_value = "modbus-tcp")]
+        protocol: String,
+
+        /// Remote host
+        host: String,
+
+        /// Remote port
+        #[arg(short, long)]
+        port: Option<u16>,
+
+        /// Data to send as hex. For modbus-tcp this is optional and a read request is built by default.
+        #[arg(short = 'x', long)]
+        hex: Option<String>,
+
+        /// Modbus unit ID
+        #[arg(short = 'i', long, default_value = "1")]
+        unit_id: u8,
+
+        /// Modbus function code
+        #[arg(short = 'f', long, default_value = "3")]
+        function: u8,
+
+        /// Modbus start register address
+        #[arg(short = 'a', long, default_value = "0")]
+        address: u16,
+
+        /// Modbus quantity/value
+        #[arg(short = 'v', long, default_value = "1")]
+        value: u16,
+
+        /// TCP timeout in milliseconds
+        #[arg(short, long, default_value = "1000")]
+        timeout: u64,
+    },
+
     /// Compute CRC/checksum for data
     Crc {
         /// Algorithm (crc16-modbus, crc16-ccitt, crc32, lrc, sum8, sum16)
@@ -271,16 +309,8 @@ fn main() -> Result<()> {
             timestamp,
             hex,
         } => cmd_monitor(&port, baud, log.as_deref(), timestamp, hex),
-        Commands::Replay {
-            port,
-            script,
-            baud,
-        } => cmd_replay(&port, &script, baud),
-        Commands::Record {
-            port,
-            output,
-            baud,
-        } => cmd_record(&port, &output, baud),
+        Commands::Replay { port, script, baud } => cmd_replay(&port, &script, baud),
+        Commands::Record { port, output, baud } => cmd_record(&port, &output, baud),
         Commands::Agent { port, action } => cmd_agent(port.as_deref(), action),
         Commands::Modbus {
             port,
@@ -290,6 +320,27 @@ fn main() -> Result<()> {
             address,
             value,
         } => cmd_modbus(&port, baud, slave_id, function, address, value),
+        Commands::Tcp {
+            protocol,
+            host,
+            port,
+            hex,
+            unit_id,
+            function,
+            address,
+            value,
+            timeout,
+        } => cmd_tcp(
+            &protocol,
+            &host,
+            port,
+            hex.as_deref(),
+            unit_id,
+            function,
+            address,
+            value,
+            timeout,
+        ),
         Commands::Crc { algorithm, data } => cmd_crc(&algorithm, &data),
     }
 }
@@ -464,7 +515,8 @@ fn cmd_monitor(
                     }
 
                     if hex {
-                        let hex_str: Vec<String> = buf[..n].iter().map(|b| format!("{:02X}", b)).collect();
+                        let hex_str: Vec<String> =
+                            buf[..n].iter().map(|b| format!("{:02X}", b)).collect();
                         println!("{}", hex_str.join(" "));
                     } else {
                         print!("{}", String::from_utf8_lossy(&buf[..n]));
@@ -606,7 +658,11 @@ fn cmd_agent(port_name: Option<&str>, action: AgentAction) -> Result<()> {
             let mut port = SerialPort::new(config);
             port.connect()?;
 
-            let bytes = if hex { parse_hex(&data)? } else { data.as_bytes().to_vec() };
+            let bytes = if hex {
+                parse_hex(&data)?
+            } else {
+                data.as_bytes().to_vec()
+            };
             let written = port.write(&bytes)?;
 
             let output = serde_json::json!({
@@ -617,9 +673,15 @@ fn cmd_agent(port_name: Option<&str>, action: AgentAction) -> Result<()> {
 
             port.disconnect()?;
         }
-        AgentAction::SendCommand { command, timeout, baud } => {
+        AgentAction::SendCommand {
+            command,
+            timeout,
+            baud,
+        } => {
             let port_name = port_name.ok_or_else(|| anyhow::anyhow!("Port name required"))?;
-            let config = SerialConfig::new(port_name).with_baud_rate(baud).with_timeout(timeout);
+            let config = SerialConfig::new(port_name)
+                .with_baud_rate(baud)
+                .with_timeout(timeout);
             let mut port = SerialPort::new(config);
             port.connect()?;
 
@@ -759,8 +821,15 @@ fn cmd_agent(port_name: Option<&str>, action: AgentAction) -> Result<()> {
     Ok(())
 }
 
-fn cmd_modbus(port_name: &str, baud: u32, slave_id: u8, function: u8, address: u16, value: u16) -> Result<()> {
-    use serialrun_core::protocol::{ModbusFrame, ModbusParser, ModbusFunction};
+fn cmd_modbus(
+    port_name: &str,
+    baud: u32,
+    slave_id: u8,
+    function: u8,
+    address: u16,
+    value: u16,
+) -> Result<()> {
+    use serialrun_core::protocol::{ModbusFrame, ModbusFunction, ModbusParser};
 
     let config = SerialConfig::new(port_name).with_baud_rate(baud);
     let mut port = SerialPort::new(config);
@@ -768,9 +837,24 @@ fn cmd_modbus(port_name: &str, baud: u32, slave_id: u8, function: u8, address: u
 
     let frame = match function {
         1 => ModbusParser::build_read_request(slave_id, ModbusFunction::ReadCoils, address, value),
-        2 => ModbusParser::build_read_request(slave_id, ModbusFunction::ReadDiscreteInputs, address, value),
-        3 => ModbusParser::build_read_request(slave_id, ModbusFunction::ReadHoldingRegisters, address, value),
-        4 => ModbusParser::build_read_request(slave_id, ModbusFunction::ReadInputRegisters, address, value),
+        2 => ModbusParser::build_read_request(
+            slave_id,
+            ModbusFunction::ReadDiscreteInputs,
+            address,
+            value,
+        ),
+        3 => ModbusParser::build_read_request(
+            slave_id,
+            ModbusFunction::ReadHoldingRegisters,
+            address,
+            value,
+        ),
+        4 => ModbusParser::build_read_request(
+            slave_id,
+            ModbusFunction::ReadInputRegisters,
+            address,
+            value,
+        ),
         5 => ModbusParser::build_write_single(slave_id, address, value),
         6 => ModbusParser::build_write_single(slave_id, address, value),
         _ => {
@@ -841,12 +925,173 @@ fn cmd_modbus(port_name: &str, baud: u32, slave_id: u8, function: u8, address: u
     Ok(())
 }
 
+fn cmd_tcp(
+    protocol: &str,
+    host: &str,
+    port: Option<u16>,
+    hex: Option<&str>,
+    unit_id: u8,
+    function: u8,
+    address: u16,
+    value: u16,
+    timeout: u64,
+) -> Result<()> {
+    match protocol.to_lowercase().as_str() {
+        "modbus-tcp" | "modbus" => cmd_modbus_tcp(
+            host,
+            port.unwrap_or(502),
+            hex,
+            unit_id,
+            function,
+            address,
+            value,
+            timeout,
+        ),
+        "iec104" | "iec-104" | "104" => cmd_iec104_tcp(host, port.unwrap_or(2404), hex, timeout),
+        _ => Err(anyhow::anyhow!(
+            "Unsupported TCP protocol '{}'. Use modbus-tcp or iec104.",
+            protocol
+        )),
+    }
+}
+
+fn cmd_modbus_tcp(
+    host: &str,
+    port: u16,
+    hex: Option<&str>,
+    unit_id: u8,
+    function: u8,
+    address: u16,
+    value: u16,
+    timeout: u64,
+) -> Result<()> {
+    use serialrun_core::protocol::{ModbusFunction, ModbusParser, ModbusTcpFrame};
+
+    let request = if let Some(raw_hex) = hex {
+        parse_hex(raw_hex)?
+    } else {
+        let rtu_frame = match function {
+            1 => {
+                ModbusParser::build_read_request(unit_id, ModbusFunction::ReadCoils, address, value)
+            }
+            2 => ModbusParser::build_read_request(
+                unit_id,
+                ModbusFunction::ReadDiscreteInputs,
+                address,
+                value,
+            ),
+            3 => ModbusParser::build_read_request(
+                unit_id,
+                ModbusFunction::ReadHoldingRegisters,
+                address,
+                value,
+            ),
+            4 => ModbusParser::build_read_request(
+                unit_id,
+                ModbusFunction::ReadInputRegisters,
+                address,
+                value,
+            ),
+            5 => {
+                let coil_value = if value == 0 { 0x0000 } else { 0xFF00 };
+                serialrun_core::protocol::ModbusFrame::new(
+                    unit_id,
+                    ModbusFunction::WriteSingleCoil,
+                    build_u16_pair(address, coil_value),
+                )
+            }
+            6 => ModbusParser::build_write_single(unit_id, address, value),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported Modbus TCP function code: {}. Use 1-6 or --hex.",
+                    function
+                ));
+            }
+        };
+        ModbusTcpFrame::from_rtu_frame(&rtu_frame, 1).to_bytes()
+    };
+
+    let response = tcp_send_read(host, port, &request, timeout)?;
+    println!("Protocol: Modbus TCP");
+    print_hex("TX", &request);
+    print_hex("RX", &response);
+
+    match ModbusTcpFrame::parse(&response) {
+        Ok(frame) => {
+            println!(
+                "Transaction: {} Unit: {} Function: 0x{:02X}",
+                frame.transaction_id,
+                frame.unit_id,
+                frame.function.to_code()
+            );
+        }
+        Err(e) => eprintln!("Modbus TCP parse warning: {}", e),
+    }
+
+    Ok(())
+}
+
+fn cmd_iec104_tcp(host: &str, port: u16, hex: Option<&str>, timeout: u64) -> Result<()> {
+    use serialrun_core::protocol::{build_startdt_act, Iec104Apdu};
+
+    let request = if let Some(raw_hex) = hex {
+        parse_hex(raw_hex)?
+    } else {
+        build_startdt_act()
+    };
+
+    let response = tcp_send_read(host, port, &request, timeout)?;
+    println!("Protocol: IEC 60870-5-104");
+    print_hex("TX", &request);
+    print_hex("RX", &response);
+
+    match Iec104Apdu::parse(&response) {
+        Ok(frame) => println!("Frame: {:?} ASDU bytes: {}", frame.kind(), frame.asdu.len()),
+        Err(e) => eprintln!("IEC104 parse warning: {}", e),
+    }
+
+    Ok(())
+}
+
+fn tcp_send_read(host: &str, port: u16, request: &[u8], timeout: u64) -> Result<Vec<u8>> {
+    let mut client = TcpClient::new(TcpClientConfig::new(host, port).with_timeout(timeout));
+    client.connect()?;
+    let response = match client.query(request, 4096) {
+        Ok(response) => response,
+        Err(serialrun_core::tcp::TcpError::Read(err))
+            if err.contains("timed out") || err.contains("WouldBlock") =>
+        {
+            Vec::new()
+        }
+        Err(e) => return Err(e.into()),
+    };
+    client.disconnect();
+    Ok(response)
+}
+
+fn print_hex(label: &str, bytes: &[u8]) {
+    let hex: Vec<String> = bytes.iter().map(|b| format!("{:02X}", b)).collect();
+    println!("{}: {}", label, hex.join(" "));
+}
+
+fn build_u16_pair(first: u16, second: u16) -> Vec<u8> {
+    let mut data = Vec::with_capacity(4);
+    data.extend_from_slice(&first.to_be_bytes());
+    data.extend_from_slice(&second.to_be_bytes());
+    data
+}
+
 fn cmd_crc(algorithm: &str, data_str: &str) -> Result<()> {
     let data = parse_hex(data_str)?;
     let result = match algorithm.to_lowercase().as_str() {
         "crc16-modbus" | "crc16modbus" => {
             let crc = serialrun_core::checksum::crc16_modbus(&data);
-            format!("CRC16/MODBUS: {:04X} (LE: {:02X} {:02X})", crc, crc as u8, (crc >> 8) as u8)
+            format!(
+                "CRC16/MODBUS: {:04X} (LE: {:02X} {:02X})",
+                crc,
+                crc as u8,
+                (crc >> 8) as u8
+            )
         }
         "crc16-ccitt" | "crc16ccitt" => {
             let crc = serialrun_core::checksum::crc16_ccitt(&data);
@@ -873,7 +1118,10 @@ fn cmd_crc(algorithm: &str, data_str: &str) -> Result<()> {
             format!("SUM16: {:04X}", sum)
         }
         _ => {
-            eprintln!("Unknown algorithm: {}. Use crc16-modbus, crc16-ccitt, crc32, lrc, sum8, sum16", algorithm);
+            eprintln!(
+                "Unknown algorithm: {}. Use crc16-modbus, crc16-ccitt, crc32, lrc, sum8, sum16",
+                algorithm
+            );
             return Ok(());
         }
     };
